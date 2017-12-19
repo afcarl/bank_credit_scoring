@@ -5,15 +5,16 @@ import unicodedata
 import string
 import os
 from torch.utils.data import Dataset
-from torch.autograd import Variable
 from collections import namedtuple
 import torch
+import pickle
 
 
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
 
-RISK_ATTRIBUTE = ["class_scoring_risk", "val_scoring_risk",
+RISK_ATTRIBUTE = [# "segmento",
+                  "class_scoring_risk", "val_scoring_risk",
                   "class_scoring_ai", "val_scoring_ai",
                   "class_scoring_bi", "val_scoring_bi",
                   "class_scoring_cr", "val_scoring_cr",
@@ -29,12 +30,90 @@ DATE_FORMAT = "%Y-%m-%d"
 T_risk = namedtuple("T_risk", RISK_ATTRIBUTE)
 T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
 
+def update_or_plot(i_iter):
+    if i_iter == 0:
+        return None
+    else:
+        return "append"
 
 
-Sample = namedtuple('Sample', ['category', 'line'])
+def get_max_length(path):
+    return len(pickle.load(open(path, "rb")))
+
+CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
+class CustomerDataset(Dataset):
+    def __init__(self, base_path, file_name):
+        self.customers = self.__extract_sample__(pickle.load(open(os.path.join(base_path, file_name), "rb")))
 
 
+        self.max_ateco = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("ateco")))
+        self.max_b_partner = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("b_partner")))
+        self.max_c_kind = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("c_kind")))
+        self.max_c_type = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("c_type")))
+        self.max_cod_uo = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("cod_uo")))
+        self.max_country_code = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("country_code")))
+        self.max_region = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("region")))
+        self.max_sae = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("sae")))
+        self.max_un_status = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("uncollectable_status")))
+        self.max_zipcode = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("zipcode")))
 
+    def __extract_sample__(self, customers):
+        create_sample = lambda x: CustomerSample(x['customer_id'], [value for timestemp, value in x["risk"].items()], x["attribute"])
+        return [create_sample(customer_att) for customer_att in customers]
+
+    def __attribute_tensor(self, attribute):
+
+        b_partner_one_hot = torch.zeros((self.max_b_partner))
+        b_partner_one_hot[attribute.b_partner] = 1
+
+        c_kind_one_hot = torch.zeros((self.max_c_kind))
+        c_kind_one_hot[attribute.customer_kind] = 1
+
+        c_type_one_hot = torch.zeros((self.max_c_type))
+        c_type_one_hot[attribute.customer_type] = 1
+
+        cod_uo_one_hot = torch.zeros((self.max_cod_uo))
+        cod_uo_one_hot[attribute.cod_uo] = 1
+
+        country_code_one_hot = torch.zeros((self.max_country_code))
+        country_code_one_hot[attribute.country_code] = 1
+
+        region_one_hot = torch.zeros((self.max_region))
+        region_one_hot[attribute.region] = 1
+
+        sae_one_hot = torch.zeros((self.max_sae))
+        sae_one_hot[attribute.sae] = 1
+
+        un_status_one_hot = torch.zeros((self.max_un_status))
+        un_status_one_hot[attribute.uncollectable_status] = 1
+
+        return torch.cat((torch.FloatTensor([attribute.ateco, attribute.birth_date, attribute.zipcode]),
+                          b_partner_one_hot,
+                          c_kind_one_hot,
+                          c_type_one_hot,
+                          cod_uo_one_hot,
+                          country_code_one_hot,
+                          region_one_hot,
+                          sae_one_hot,
+                          un_status_one_hot
+                          ))
+
+
+    def __risk_tensor__(self, risk):
+        return torch.FloatTensor(risk)
+
+    def __len__(self):
+        return len(self.customers)
+
+    def __getitem__(self, idx):
+        customer_id, risk, attribute = self.customers[idx]
+        torch_risk = self.__risk_tensor__(risk[:-1])
+        torch_attribute = self.__attribute_tensor(attribute)
+
+        return (torch.cat((torch_risk, torch_attribute.expand(12, -1)), dim=1),
+                torch.FloatTensor([risk[-1].val_scoring_risk]))
+
+NameSample = namedtuple('NameSample', ['category', 'line'])
 class NameDataset(Dataset):
     def __init__(self, paths):
         self.paths = glob.glob(paths)
@@ -65,7 +144,7 @@ class NameDataset(Dataset):
     # Read a file and split into lines
     def __readLines__(self, category, filename):
         lines = open(filename, encoding='utf-8').read().strip().split('\n')
-        return [Sample(category, self.__unicodeToAscii__(line)) for line in lines]
+        return [NameSample(category, self.__unicodeToAscii__(line)) for line in lines]
 
     # One-hot vector for category
     def __category_tensor__(self, category):

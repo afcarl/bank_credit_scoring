@@ -1,30 +1,29 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from torch.autograd import Variable
-import torch.optim as optim
 
-
-class Net(nn.Module):
+class SimpleGRU(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, input_size, hidden_size, n_layers, output_size, batch_size, dropout=0.5):
-        super(Net, self).__init__()
+    def __init__(self, features_size, hidden_size, n_layers, output_size, batch_size, dropout=0.5):
+        super(SimpleGRU, self).__init__()
 
+        self.features_size = features_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.nlayers = n_layers
         self.batch_size = batch_size
 
-        self.rnn = nn.GRU(input_size, hidden_size, n_layers,
+        self.rnn = nn.GRU(features_size, hidden_size[0], n_layers,
                           batch_first=True,
                           dropout=dropout)
 
 
-        self.dense = nn.Sequential(nn.Linear(hidden_size, output_size),
-                                   nn.ELU())
+        self.dense = nn.Sequential(nn.Linear(hidden_size[0], hidden_size[1]),
+                                   nn.Linear(hidden_size[1], output_size),
+                                   nn.ReLU())
+
         self.drop = nn.Dropout(dropout)
         self.criterion = nn.MSELoss()
 
@@ -50,10 +49,11 @@ class Net(nn.Module):
         """
         output, hidden = self.rnn(input, hidden)
 
-        # select last output (wrong in this case)
+        # select last output
         # row_indices = torch.arange(0, self.batch_size).long()
         # seq_length = torch.LongTensor(seq_length) - 1
         # output = output[row_indices, seq_length, :]
+        output = output[:, -1, :]
 
         output = self.drop(output)
         output = self.dense(output)
@@ -65,7 +65,14 @@ class Net(nn.Module):
         generate a new hidden state to avoid the back-propagation to the beginning to the dataset
         :return:
         """
-        return Variable(torch.zeros(self.nlayers, self.batch_size, self.hidden_size))
+        return Variable(torch.zeros(self.nlayers, self.batch_size, self.hidden_size[0]))
+
+    def repackage_hidden_state(self, h):
+        """Wraps hidden states in new Variables, to detach them from their history."""
+        if type(h) == Variable:
+            return Variable(h.data)
+        else:
+            return tuple(self.repackage_hidden_state(v) for v in h)
 
     def compute_loss(self, b_predict, b_target):
         """compute the loss"""

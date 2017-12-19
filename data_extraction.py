@@ -26,7 +26,7 @@ GET_ALL_CUSTOMER = "SELECT customerid FROM customers"
 GET_ALL_OWNER = "SELECT customerid FROM onemancompany_owners"
 CUSTOMERS_OWNER_UNION = "SELECT c.customerid FROM customers AS c UNION SELECT o.customerid FROM onemancompany_owners AS o"
 GET_REVENUE_USER = "SELECT customerid FROM revenue"
-GET_RISK_USER = "SELECT customerid, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching  FROM risk ORDER BY customerid asc, date_ref asc"
+GET_RISK_USER = "SELECT customerid, segmento, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching  FROM risk ORDER BY customerid asc, date_ref asc"
 GET_RISK_USER_BY_ID = "SELECT customerid, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching  FROM risk ORDER BY date_ref asc WHERE customerid={}"
 GET_ALL_CUSTOMER_LINKS_ID = "SELECT DISTINCT * FROM (SELECT c_one.customerid FROM customer_links AS c_one UNION SELECT c2.customerid_link FROM customer_links AS c2) AS u"
 GET_ALL_CUSTOMER_LINKS_BY_ID = "SELECT DISTINCT customerid_link FROM customer_links WHERE customerid={}"
@@ -41,21 +41,21 @@ f_check_b_date = lambda x: REF_DATE if x == "" else x
 def extract_default_customers_timeseries(cursor):
     cursor.execute(GET_RISK_USER)
     customers = {}
-    for row, (customer_id, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre,
+    for row, (customer_id, segmento, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre,
               val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi,
               val_scoring_sd, class_scoring_sd, pre_notching) in enumerate(cursor):
 
         if customer_id in customers:
             risk_attribute = customers[customer_id]["risk_attribute"]
-            risk_mapping(risk_attribute, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk, val_scoring_pre,
-                         class_scoring_pre,
+            risk_mapping(risk_attribute, segmento, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk,
+                         val_scoring_pre, class_scoring_pre,
                          val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi,
                          class_scoring_bi,
                          val_scoring_sd, class_scoring_sd, pre_notching)
         else:
             risk_attribute = OrderedDict()
-            risk_mapping(risk_attribute, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk, val_scoring_pre,
-                         class_scoring_pre,
+            risk_mapping(risk_attribute, segmento, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk,
+                         val_scoring_pre, class_scoring_pre,
                          val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi,
                          class_scoring_bi,
                          val_scoring_sd, class_scoring_sd, pre_notching)
@@ -94,12 +94,13 @@ def extract_default_customers_timeseries(cursor):
 
     pickle.dump(customers, open(path_join("data", "customers", "customers_attribute_risk.bin"), "wb"))
 
-def risk_mapping(risk_attribute, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre,
+def risk_mapping(risk_attribute, segmento, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre,
                  val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi,
                  val_scoring_sd, class_scoring_sd, pre_notching):
 
 
     risk_attribute[date_ref] = {
+        "segmento": segmento,
         "val_scoring_risk": f_check_none(val_scoring_risk),
         "class_scoring_risk": class_scoring_risk,
         "val_scoring_pre": f_check_none(val_scoring_pre),

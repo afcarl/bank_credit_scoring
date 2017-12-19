@@ -5,7 +5,7 @@ from collections import OrderedDict
 from bidict import bidict
 import numpy as np
 from datetime import datetime
-
+import random
 from helper import TIMESTAMP, T_risk, T_attribute, RISK_ATTRIBUTE, C_ATTRIBUTE, REF_DATE, DATE_FORMAT
 
 config = {
@@ -47,6 +47,7 @@ REGION_DICT = bidict({})
 SAE_DICT = bidict({})
 US_DICT = bidict({})
 ZIPCODE_DICT = bidict({})
+SEGMENTO_DICT = bidict({})
 
 def get_ateco_description():
     cnx = mysql.connector.connect(**config)
@@ -101,7 +102,7 @@ def fix_ateco_code(ateco):
     return ateco.replace("X", "")
 
 
-def format_risk(customer_id, risk):
+def format_risk(risk):
     check_null = lambda x: -10 if np.isnan(x) else x
 
     formatted_risk = OrderedDict()
@@ -113,7 +114,17 @@ def format_risk(customer_id, risk):
         t_risk = risk[timestemp]
 
         # check attribute for give timestemp
-        formatted_t_risk = T_risk._make([check_null(t_risk[r_attribute]) for r_attribute in RISK_ATTRIBUTE])
+        t_risk_value = []
+        for r_attribute in RISK_ATTRIBUTE:
+            if r_attribute == "segmento":
+                if t_risk[r_attribute] == "UNR" or t_risk[r_attribute] == "UNT":
+                    raise KeyError("segmento-{}".format(t_risk[r_attribute]))
+                else:
+                    t_risk_value.append(get_value(t_risk[r_attribute], SEGMENTO_DICT))
+            else:
+                t_risk_value.append(check_null(t_risk[r_attribute]))
+
+        formatted_t_risk = T_risk._make(t_risk_value)
 
         # save formatted timestemp
         formatted_risk[timestemp] = formatted_t_risk
@@ -163,7 +174,7 @@ if __name__ == "__main__":
             customer_risk, customer_attribute = customer_data[customer_id]["risk_attribute"], customer_data[customer_id]["node_attribute"]
             customer_attribute["ateco"] = fix_ateco_code(customer_attribute["ateco"])
 
-            customer_risk = format_risk(customer_id, customer_risk)
+            customer_risk = format_risk(customer_risk)
             customer_attribute = format_attribute(customer_attribute, ateco_des, sea_des)
 
             customer_formated_data[customer_id] = dict(risk=customer_risk,
@@ -187,9 +198,38 @@ if __name__ == "__main__":
     pickle.dump(REGION_DICT, open(path_join("./data", "customers", "dicts", "region_dict.bin"), "wb"))
     pickle.dump(SAE_DICT, open(path_join("./data", "customers", "dicts", "sae_dict.bin"), "wb"))
     pickle.dump(US_DICT, open(path_join("./data", "customers", "dicts", "uncollectable_status_dict.bin"), "wb"))
-    pickle.dump(ZIPCODE_DICT, open(path_join("./data", "customers", "dicts", "zipdoc_dict.bin"), "wb"))
+    pickle.dump(ZIPCODE_DICT, open(path_join("./data", "customers", "dicts", "zipcode_dict.bin"), "wb"))
 
     pickle.dump(customer_formated_data, open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "wb"))
+
+    customer_formated_data = pickle.load(open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "rb"))
+
+    training_sample = random.sample(customer_formated_data.items(), 18000)
+    training_data = []
+    for c_id, att_dict in training_sample:
+        training_data.append(dict(customer_id=c_id, risk=att_dict['risk'], attribute=att_dict['attribute']))
+        del customer_formated_data[c_id]
+
+    eval_sample = random.sample(customer_formated_data.items(), 4000)
+    eval_data = []
+    for c_id, att_dict in eval_sample:
+        eval_data.append(dict(customer_id=c_id, risk=att_dict['risk'], attribute=att_dict['attribute']))
+        del customer_formated_data[c_id]
+
+    test_data = []
+    for c_id, att_dict in customer_formated_data.items():
+        test_data.append(dict(customer_id=c_id, risk=att_dict['risk'], attribute=att_dict['attribute']))
+
+
+
+    pickle.dump(training_data,
+                open(path_join("./data", "customers", "train_customers_formatted_attribute_risk.bin"), "wb"))
+
+    pickle.dump(eval_data,
+                open(path_join("./data", "customers", "eval_customers_formatted_attribute_risk.bin"), "wb"))
+
+    pickle.dump(test_data,
+                open(path_join("./data", "customers", "test_customers_formatted_attribute_risk.bin"), "wb"))
 
 
 
