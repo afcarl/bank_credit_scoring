@@ -1,7 +1,13 @@
 import mysql.connector
-from mysql.connector import errorcode
-import networkx as nx
 import pickle
+from os.path import join as path_join
+from collections import OrderedDict
+from bidict import bidict
+import numpy as np
+from datetime import datetime
+
+from helper import TIMESTAMP, T_risk, T_attribute, RISK_ATTRIBUTE, C_ATTRIBUTE, REF_DATE, DATE_FORMAT
+
 config = {
   'user': 'root',
   'password': 'vela1990',
@@ -27,199 +33,165 @@ GET_ALL_CUSTOMER = "SELECT customerid, birthdate, b_partner, cod_uo, zipcode, re
 GET_RISK_BY_CUSTOMER_ID = "SELECT customerid, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching FROM risk WHERE customerid = {}"
 GET_REVENUE_BY_CUSTOMER_ID = "SELECT customerid, date_ref, val_scoring_rev, class_scoring_rev,  val_scoring_op, class_scoring_op,  val_scoring_co, class_scoring_co    FROM revenue WHERE customerid = {}"
 GET_ALL_ONEMANCOMPANY = "SELECT customerid, customerid_join FROM onemancompany_owners"
+GET_ATECO = "SELECT * FROM ateco"
+GET_SAE = "SELECT * FROM sae"
 
 
-cnx = mysql.connector.connect(**config)
-cursor = cnx.cursor()
+ATECO_DICT = bidict({})
+B_PARTNER_DICT = bidict({})
+COD_UO_DICT = bidict({})
+COUNTRY_CODE_DICT = bidict({})
+C_KIND_DICT = bidict({})
+C_TYPE_DICT = bidict({})
+REGION_DICT = bidict({})
+SAE_DICT = bidict({})
+US_DICT = bidict({})
+ZIPCODE_DICT = bidict({})
 
+def get_ateco_description():
+    cnx = mysql.connector.connect(**config)
+    cursor = cnx.cursor()
+    ret = {}
+    try:
+        cursor.execute(GET_ATECO)
+        for cod_ateco, description in cursor:
+            ret[cod_ateco] = description
+    finally:
+        cnx.close()
+    return ret
+
+def get_sea_description():
+    cnx = mysql.connector.connect(**config)
+    cursor = cnx.cursor()
+    ret = {}
+    try:
+        cursor.execute(GET_SAE)
+        for cod_sae, description in cursor:
+            ret[cod_sae] = description
+    finally:
+        cnx.close()
+    return ret
+
+
+def get_value(id, dict):
+    """
+    Compute the value for the given input id
+    :param id:
+    :param dict:
+    :return:
+    """
+    if id in dict:
+        value = dict[id]
+    else:
+        value = len(dict)
+        dict[id] = value
+    return value
+
+def get_day_diff(birth_date):
+    '''
+    compute day difference between REF_DATE and the birth day
+    :param birth_date:
+    :return:
+    '''
+    r_date = datetime.strptime(REF_DATE, DATE_FORMAT)
+    b_date = datetime.strptime(birth_date, DATE_FORMAT)
+    return (r_date - b_date).days / 7
+
+def fix_ateco_code(ateco):
+    return ateco.replace("X", "")
+
+
+def format_risk(customer_id, risk):
+    check_null = lambda x: -10 if np.isnan(x) else x
+
+    formatted_risk = OrderedDict()
+
+
+    # extract timestemp
+    for timestemp in TIMESTAMP:
+        # try:
+        t_risk = risk[timestemp]
+
+        # check attribute for give timestemp
+        formatted_t_risk = T_risk._make([check_null(t_risk[r_attribute]) for r_attribute in RISK_ATTRIBUTE])
+
+        # save formatted timestemp
+        formatted_risk[timestemp] = formatted_t_risk
+        # except KeyError as ke:
+        #     print("id:{}\tKey: {}".format(customer_id, ke))
+
+    return formatted_risk
+
+def format_attribute(attribute, ateco_des, sea_des):
+    ateco, ateco_des = attribute["ateco"], ateco_des[attribute["ateco"]]
+    b_partner = attribute['b_partner']
+    birth_date = attribute['birth_date']
+    cod_uo = attribute['cod_uo']
+    country_code = attribute['country_code']
+    c_kind, k_desc = attribute['customer_kind'], attribute['kind_desc']
+    c_type, t_desc = attribute['customer_type'], attribute['type_desc']
+    region = attribute['region']
+    sae, sae_des = attribute['sae'], sea_des[attribute['sae']]
+    uncollectable_status = attribute['uncollectable_status']
+    zipcode = attribute['zipcode']
+
+    atribute_values = [
+        get_value((ateco, ateco_des), ATECO_DICT),
+        get_value(b_partner, B_PARTNER_DICT),
+        get_day_diff(birth_date),
+        get_value(cod_uo, COD_UO_DICT),
+        get_value(country_code, COUNTRY_CODE_DICT),
+        get_value((c_kind, k_desc), C_KIND_DICT),
+        get_value((c_type, t_desc), C_TYPE_DICT),
+        get_value(region, REGION_DICT),
+        get_value((sae, sae_des), SAE_DICT),
+        get_value(uncollectable_status, US_DICT),
+        get_value(zipcode, ZIPCODE_DICT),
+    ]
+    formatted_attribute = T_attribute._make(atribute_values)
+    return formatted_attribute
 
 
 if __name__ == "__main__":
-    G = nx.DiGraph()
-    try:
+    customer_data = pickle.load(open(path_join("./data", "customers", "customers_attribute_risk.bin"), "rb"))
+    customer_formated_data = {}
 
-        f_check_none = lambda x: -1 if x == None else x
+    ateco_des = get_ateco_description()
+    sea_des = get_sea_description()
+    for row, customer_id in enumerate(sorted(customer_data.keys())):
+        try:
+            customer_risk, customer_attribute = customer_data[customer_id]["risk_attribute"], customer_data[customer_id]["node_attribute"]
+            customer_attribute["ateco"] = fix_ateco_code(customer_attribute["ateco"])
 
-        # create graph
-        # cursor.execute(GET_ALL_RISK_LINKS)
-        # for customer_id, customer_link, cond_link_type, des_link_type in cursor:
-        #     G.add_edge(customer_id, customer_link, cod_type=cond_link_type, des_link_type=des_link_type)
-        #
-        # print("total nodes: {}".format(G.number_of_nodes()))
-        # print("total edges: {}".format(G.number_of_edges()))
-        # print("average degree: {}".format(nx.average_degree_connectivity(G)))
-        # pickle.dump(G, open("graph_only_risk.bin", "wb"))
-        #
-        # # add risk attribute
-        # cursor.execute(GET_ALL_RISK_ID)
-        # risk_ids = []
-        # counter_risk_id = 0
-        # for id, in cursor:
-        #     risk_ids.append(id)
-        # # add risk attribute
-        # for id in risk_ids:
-        #     if G.has_node(id):
-        #         if 'risk_attribute' in G.nodes[id]:
-        #             counter_risk_id += 1
-        #         else:
-        #             cursor.execute(GET_RISK_BY_CUSTOMER_ID.format(id))
-        #             time_stamps = []
-        #             for customer_id, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching in cursor:
-        #                 time_stamps.append({"date_ref": date_ref,
-        #                                     "val_scoreing_risk": f_check_none(val_scoring_risk),
-        #                                     "class_scoring_risl": f_check_none(class_scoring_risk),
-        #                                     "val_scoring_ai": f_check_none(val_scoring_ai),
-        #                                     "class_scoring_ai": f_check_none(class_scoring_ai),
-        #                                     "val_scoring_cr": f_check_none(val_scoring_cr),
-        #                                     "class_scoring_cr": f_check_none(class_scoring_cr),
-        #                                     "val_scoring_bi": f_check_none(val_scoring_bi),
-        #                                     "class_scoring_bi": f_check_none(class_scoring_bi),
-        #                                     "val_scoring_sd": f_check_none(val_scoring_sd),
-        #                                     "class_scoring_sd": f_check_none(class_scoring_sd),
-        #                                     "pre_notching": pre_notching
-        #                                     })
-        #             G.nodes[id]['risk_attribute'] = time_stamps
-        #             G.nodes[id]['len_risk_attribute'] = len(time_stamps)
-        #             counter_risk_id += 1
-        #             if (counter_risk_id % 100) == 0:
-        #                 print("{}/{}".format(counter_risk_id, len(risk_ids)))
-        # pickle.dump(G, open("graph_only_risk_attribue.bin", "wb"))
-        # print("Number of risk customer: {}".format(counter_risk_id))
+            customer_risk = format_risk(customer_id, customer_risk)
+            customer_attribute = format_attribute(customer_attribute, ateco_des, sea_des)
 
+            customer_formated_data[customer_id] = dict(risk=customer_risk,
+                                                       attribute=customer_attribute)
+        except KeyError as ke:
+            print("{}\t{}".format(customer_id, ke))
+        except Exception as e:
+            raise e
 
-        G = pickle.load(open("graph_only_risk_attribue.bin", "rb"))
-        print("total nodes: {}".format(G.number_of_nodes()))
-        print("total edges: {}".format(G.number_of_edges()))
+        if row % 100 == 0:
+            print(row)
 
-        # remove node with no risk
-        node_to_remove = []
-        for node_id in G.nodes:
-            if not 'risk_attribute' in G.nodes[node_id]:
-                node_to_remove.append(node_id)
-        G.remove_nodes_from(node_to_remove)
-        print("total nodes: {}".format(G.number_of_nodes()))
-        print("total edges: {}".format(G.number_of_edges()))
-        # extract biggest connected component
-        sub_graphs = sorted(nx.strongly_connected_component_subgraphs(G),
-                            key=lambda sub_graph: sub_graph.number_of_nodes(), reverse=True)
-        for cc_id, sub_graph in enumerate(sub_graphs):
-            print("{}\t{}".format(cc_id, len(sub_graph)))
-            if cc_id == 0:
-                number_of_risky_users = 0
-                print(sub_graph.number_of_nodes())
-                print(sub_graph.number_of_edges())
-                for node_id in sub_graph.nodes:
-                    if 'risk_attribute' in sub_graph.nodes[node_id]:
-                        number_of_risky_users += 1
-                print("risk_attribute:{}".format(number_of_risky_users))
-                # pickle.dump(sub_graph, open("cc_graph_only_risk_.bin", "wb"))
-                break
+    print(len(customer_formated_data))
 
+    pickle.dump(ATECO_DICT, open(path_join("./data", "customers", "dicts", "ateco_dict.bin"), "wb"))
+    pickle.dump(B_PARTNER_DICT, open(path_join("./data", "customers", "dicts", "b_partner_dict.bin"), "wb"))
+    pickle.dump(COD_UO_DICT, open(path_join("./data", "customers", "dicts", "cod_uo_dict.bin"), "wb"))
+    pickle.dump(COUNTRY_CODE_DICT, open(path_join("./data", "customers", "dicts", "country_code_dict.bin"), "wb"))
+    pickle.dump(C_KIND_DICT, open(path_join("./data", "customers", "dicts", "c_kind_dict.bin"), "wb"))
+    pickle.dump(C_TYPE_DICT, open(path_join("./data", "customers", "dicts", "c_type_dict.bin"), "wb"))
+    pickle.dump(REGION_DICT, open(path_join("./data", "customers", "dicts", "region_dict.bin"), "wb"))
+    pickle.dump(SAE_DICT, open(path_join("./data", "customers", "dicts", "sae_dict.bin"), "wb"))
+    pickle.dump(US_DICT, open(path_join("./data", "customers", "dicts", "uncollectable_status_dict.bin"), "wb"))
+    pickle.dump(ZIPCODE_DICT, open(path_join("./data", "customers", "dicts", "zipdoc_dict.bin"), "wb"))
 
-        # cursor.execute(GET_ALL_CUSTOMER)
-        # for customer_id, birth_date, b_partner, cod_uo, zipcode, region, country_code, customer_kind, kind_desc, customer_type, type_desc, uncollectable_status, ateco, sae in cursor:
-        #     if G.has_node(customer_id):
-        #         node_attribute = {
-        #             "birth_date": birth_date,
-        #             "b_partner": b_partner,
-        #             "cod_uo": cod_uo,
-        #             "zipcode": zipcode,
-        #             "region": region,
-        #             "country_code": country_code,
-        #             "customer_kind": customer_kind,
-        #             "kind_desc": kind_desc,
-        #             "customer_type": customer_type,
-        #             "type_desc": type_desc,
-        #             "uncollectable_status": uncollectable_status,
-        #             "ateco": ateco,
-        #             "sae": sae
-        #         }
-        #         G.nodes[customer_id]['node_attribute'] = node_attribute
-        #
-        # pickle.dump(G, open("graph_node_attribute.bin", "wb"))
-
-        # G = pickle.load(open("graph_risk_rev_attribue.bin", "rb"))
-        #
-        # cursor.execute(GET_ALL_ONEMANCOMPANY)
-        # for customer_id, customer_id_join in cursor:
-        #     G.add_edge(customer_id, customer_id_join, cod_type="1M", des_link_type="ONE_MAN_COMPANY")
-        # print("added one man company")
+    pickle.dump(customer_formated_data, open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "wb"))
 
 
 
-        # # get all risky nodes
-        # cursor.execute(GET_ALL_RISK_ID_ONEMANCOMPANY)
-        # risk_ids = []
-        # counter_risk_id = 0
-        # for id, in cursor:
-        #     risk_ids.append(id)
-        # # add risk attribute
-        # for id in risk_ids:
-        #     if G.has_node(id):
-        #         if 'risk_attribute' in G.nodes[id]:
-        #             counter_risk_id += 1
-        #         else:
-        #             cursor.execute(GET_RISK_BY_CUSTOMER_ID.format(id))
-        #             time_stamps = []
-        #             for customer_id, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching in cursor:
-        #                 time_stamps.append({"date_ref": date_ref,
-        #                                     "val_scoreing_risk": f_check_none(val_scoring_risk),
-        #                                     "class_scoring_risl": f_check_none(class_scoring_risk),
-        #                                     "val_scoring_ai": f_check_none(val_scoring_ai),
-        #                                     "class_scoring_ai": f_check_none(class_scoring_ai),
-        #                                     "val_scoring_cr": f_check_none(val_scoring_cr),
-        #                                     "class_scoring_cr": f_check_none(class_scoring_cr),
-        #                                     "val_scoring_bi": f_check_none(val_scoring_bi),
-        #                                     "class_scoring_bi": f_check_none(class_scoring_bi),
-        #                                     "val_scoring_sd": f_check_none(val_scoring_sd),
-        #                                     "class_scoring_sd": f_check_none(class_scoring_sd),
-        #                                     "pre_notching": pre_notching
-        #                                     })
-        #             G.nodes[id]['risk_attribute'] = time_stamps
-        #             G.nodes[id]['len_risk_attribute'] = len(time_stamps)
-        #             counter_risk_id += 1
-        #             if (counter_risk_id % 100) == 0:
-        #                 print("{}/{}".format(counter_risk_id,len(risk_ids)))
-        # pickle.dump(G, open("graph_omc_risk_attribue.bin", "wb"))
-        # print("Number of risk customer: {}".format(counter_risk_id))
-        #
-        #
-        #
-        # # get all profitable nodes
-        # cursor.execute(GET_ALL_REVENUE_ID_ONEMANCOMPANY)
-        # revenue_id = []
-        # counter_revenue_id = 0
-        # for id, in cursor:
-        #     revenue_id.append(id)
-        #
-        # # add revenue attribute
-        # for id in revenue_id:
-        #     if G.has_node(id):
-        #         if 'revenue_attribute' in G.nodes[id]:
-        #             counter_revenue_id += 1
-        #         else:
-        #             cursor.execute(GET_REVENUE_BY_CUSTOMER_ID.format(id))
-        #             time_stamps = []
-        #             for customerid, date_ref, val_scoring_rev, class_scoring_rev,  val_scoring_op, class_scoring_op,  val_scoring_co, class_scoring_co in cursor:
-        #                 time_stamps.append({
-        #                     "date_ref": date_ref,
-        #                     "val_scoring_rev": f_check_none(val_scoring_rev),
-        #                     "class_scoring_rev": f_check_none(class_scoring_rev),
-        #                     "val_scoring_op": f_check_none(val_scoring_op),
-        #                     "class_scoring_op": f_check_none(class_scoring_op),
-        #                     "val_scoring_co": f_check_none(val_scoring_co),
-        #                     "class_scoring_co": f_check_none(class_scoring_co)
-        #                 })
-        #             G.nodes[id]['revenue_attribute'] = time_stamps
-        #             G.nodes[id]['len_revenue_attribute'] = len(time_stamps)
-        #             counter_revenue_id += 1
-        #             if (counter_revenue_id % 100) == 0:
-        #                 print("{}/{}".format(counter_revenue_id,len(revenue_id)))
-        #
-        # print("Number of revenue customer: {}".format(counter_revenue_id))
-        # pickle.dump(G, open("graph_omc_risk_rev_attribue.bin", "wb"))
-    finally:
-        cursor.close()
-        cnx.close()
 
 

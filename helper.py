@@ -8,7 +8,31 @@ from torch.utils.data import Dataset
 from torch.autograd import Variable
 from collections import namedtuple
 import torch
+
+
+TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
+             "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
+
+RISK_ATTRIBUTE = ["class_scoring_risk", "val_scoring_risk",
+                  "class_scoring_ai", "val_scoring_ai",
+                  "class_scoring_bi", "val_scoring_bi",
+                  "class_scoring_cr", "val_scoring_cr",
+                  "class_scoring_sd", "val_scoring_sd",
+                  "pre_notching", "class_scoring_pre"]
+
+C_ATTRIBUTE = ["ateco", "b_partner", "birth_date", "cod_uo", "country_code", "customer_kind", "customer_type", "region",
+               "sae", "uncollectable_status", "zipcode"]
+
+REF_DATE = "2018-01-01"
+DATE_FORMAT = "%Y-%m-%d"
+
+T_risk = namedtuple("T_risk", RISK_ATTRIBUTE)
+T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
+
+
+
 Sample = namedtuple('Sample', ['category', 'line'])
+
 
 
 class NameDataset(Dataset):
@@ -80,54 +104,7 @@ class NameDataset(Dataset):
                     seq_length=seq_length)
 
 
-# def set_pad_collate(max_sequence_length, batch_size, n_letters):
-#     def padd_collate(batch):
-#         "Puts each data field into a tensor with outer dimension batch size"
-#         b_category = torch.stack([d for d in batch['category']], dim=0)
-#         b_input_sequence = torch.LongTensor(batch_size, max_sequence_length, n_letters).zero_()
-#         b_target_sequence = torch.LongTensor(batch_size, max_sequence_length).zero_()
-#
-#         [b_input_sequence[idx] = d for idx, d in enumerate(batch['input_sequence'])]
-#
-#
-#
-#         error_msg = "batch must contain tensors, numbers, dicts or lists; found {}"
-#         elem_type = type(batch[0])
-#         if torch.is_tensor(batch[0]):
-#             out = None
-#             if _use_shared_memory:
-#                 # If we're in a background process, concatenate directly into a
-#                 # shared memory tensor to avoid an extra copy
-#                 numel = sum([x.numel() for x in batch])
-#                 storage = batch[0].storage()._new_shared(numel)
-#                 out = batch[0].new(storage)
-#             return torch.stack(batch, 0, out=out)
-#         elif elem_type.__module__ == 'numpy' and elem_type.__name__ != 'str_' \
-#                 and elem_type.__name__ != 'string_':
-#             elem = batch[0]
-#             if elem_type.__name__ == 'ndarray':
-#                 # array of string classes and object
-#                 if re.search('[SaUO]', elem.dtype.str) is not None:
-#                     raise TypeError(error_msg.format(elem.dtype))
-#
-#                 return torch.stack([torch.from_numpy(b) for b in batch], 0)
-#             if elem.shape == ():  # scalars
-#                 py_type = float if elem.dtype.name.startswith('float') else int
-#                 return numpy_type_map[elem.dtype.name](list(map(py_type, batch)))
-#         elif isinstance(batch[0], int):
-#             return torch.LongTensor(batch)
-#         elif isinstance(batch[0], float):
-#             return torch.DoubleTensor(batch)
-#         elif isinstance(batch[0], string_classes):
-#             return batch
-#         elif isinstance(batch[0], collections.Mapping):
-#             return {key: default_collate([d[key] for d in batch]) for key in batch[0]}
-#         elif isinstance(batch[0], collections.Sequence):
-#             transposed = zip(*batch)
-#             return [default_collate(samples) for samples in transposed]
-#
-#         raise TypeError((error_msg.format(type(batch[0]))))
-#     return padd_collate
+
 
 def ensure_dir(file_path):
     '''
