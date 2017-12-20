@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 from collections import namedtuple
 import torch
 import pickle
-
+from random import randint
 
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
@@ -117,6 +117,29 @@ class CustomerDataset(Dataset):
 
         return (torch.cat((torch_risk, torch_attribute.expand(12, -1)), dim=1),
                 torch.FloatTensor([risk[-1].val_scoring_risk]))
+
+
+class TestDataset(Dataset):
+    def __init__(self, length=10):
+        self.length = length
+        self.samples = [self.__generate_sequence__() for _ in range(2000)]
+
+
+    def __generate_sequence__(self):
+        return [[randint(0, 99)] for _ in range(self.length)]
+
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        input_sequence = torch.FloatTensor(sample)
+        target_sequence = input_sequence[-2]
+
+        return (input_sequence, target_sequence)
+
+
 
 NameSample = namedtuple('NameSample', ['category', 'line'])
 class NameDataset(Dataset):

@@ -19,7 +19,6 @@ class SimpleGRU(nn.Module):
                           batch_first=True,
                           dropout=dropout)
 
-
         self.dense = nn.Sequential(nn.Linear(hidden_size[0], hidden_size[1]),
                                    nn.Linear(hidden_size[1], output_size),
                                    nn.ReLU())
@@ -35,9 +34,15 @@ class SimpleGRU(nn.Module):
         reset the network parameters using xavier init
         :return:
         """
+        initrange = 0.1
         for p in self.parameters():
-            if len(p.data.shape) >= 2:
-                nn.init.xavier_uniform(p)
+            if len(p.data.shape) == 1:
+                p.data.fill_(0)
+            else:
+                nn.init.xavier_uniform(p.data)
+        # initrange = 0.1
+        # self.dense.bias.data.fill_(0)
+        # self.dense.weight.data.uniform_(-initrange, initrange)
 
 
     def forward(self, input, hidden):
@@ -57,15 +62,15 @@ class SimpleGRU(nn.Module):
 
         output = self.drop(output)
         output = self.dense(output)
-        output = self.drop(output)
-        return output
+        return output, hidden
 
-    def init_hidden(self):
+    def init_hidden(self, batch_size):
         """
         generate a new hidden state to avoid the back-propagation to the beginning to the dataset
         :return:
         """
-        return Variable(torch.zeros(self.nlayers, self.batch_size, self.hidden_size[0]))
+        weight = next(self.parameters()).data
+        return Variable(weight.new(self.nlayers, batch_size, self.hidden_size[0]).zero_())
 
     def repackage_hidden_state(self, h):
         """Wraps hidden states in new Variables, to detach them from their history."""
