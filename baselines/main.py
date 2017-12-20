@@ -31,7 +31,7 @@ def __pars_args__():
                         help="File name")
 
     parser.add_argument('--batch_size', type=int, default=30, help='Batch size for training.')
-    parser.add_argument('--feature_size', type=int, default=200, help='Feature size.')
+    parser.add_argument('--feature_size', type=int, default=23, help='Feature size.')
     parser.add_argument('--memory_size', type=list, default=[1024, 518], help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
@@ -39,7 +39,7 @@ def __pars_args__():
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.001, help='learning rate (default: 0.001)')
     parser.add_argument('--epsilon', type=float, default=0.1, help='Epsilon value for Adam Optimizer.')
     parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
-    parser.add_argument('--n_iter', type=int, default=5000, help="Iteration number.")
+    parser.add_argument('--n_iter', type=int, default=130, help="Iteration number.")
 
 
     parser.add_argument('--train', default=True, help='if we want to update the master weights')
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     args = __pars_args__()
     model = SimpleGRU(args.feature_size, args.memory_size, 1, args.output_size, args.batch_size,
                       dropout=args.drop_prob)
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate)
 
     train_dataset = CustomerDataset(args.data_dir,  args.eval_file_name)
     eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
