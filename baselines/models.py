@@ -21,7 +21,7 @@ class SimpleGRU(nn.Module):
 
         self.dense = nn.Sequential(nn.Linear(hidden_size[0], hidden_size[1]),
                                    nn.Linear(hidden_size[1], output_size),
-                                   nn.ReLU())
+                                   nn.ELU())
 
         self.drop = nn.Dropout(dropout)
         self.criterion = nn.MSELoss()
@@ -34,7 +34,6 @@ class SimpleGRU(nn.Module):
         reset the network parameters using xavier init
         :return:
         """
-        initrange = 0.1
         for p in self.parameters():
             if len(p.data.shape) == 1:
                 p.data.fill_(0)

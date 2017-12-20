@@ -61,7 +61,7 @@ class CustomerDataset(Dataset):
         create_sample = lambda x: CustomerSample(x['customer_id'], [value for timestemp, value in x["risk"].items()], x["attribute"])
         return [create_sample(customer_att) for customer_att in customers]
 
-    def __attribute_one_hot_tensor(self, attribute):
+    def __attribute_one_hot_tensor__(self, attribute):
 
         b_partner_one_hot = torch.zeros((self.max_b_partner))
         b_partner_one_hot[attribute.b_partner] = 1
@@ -98,7 +98,7 @@ class CustomerDataset(Dataset):
                           un_status_one_hot
                           ))
 
-    def __attribute_tensor(self, attribute):
+    def __attribute_tensor__(self, attribute):
         return torch.FloatTensor([attribute.ateco, attribute.birth_date, attribute.zipcode, attribute.b_partner,
                                   attribute.customer_kind, attribute.customer_type, attribute.cod_uo,
                                   attribute.country_code, attribute.region, attribute.sae, attribute.uncollectable_status])
@@ -113,7 +113,7 @@ class CustomerDataset(Dataset):
     def __getitem__(self, idx):
         customer_id, risk, attribute = self.customers[idx]
         torch_risk = self.__risk_tensor__(risk[:-1])
-        torch_attribute = self.__attribute_tensor(attribute)
+        torch_attribute = self.__attribute_one_hot_tensor__(attribute)
 
         return (torch.cat((torch_risk, torch_attribute.expand(12, -1)), dim=1),
                 torch.FloatTensor([risk[-1].val_scoring_risk]))

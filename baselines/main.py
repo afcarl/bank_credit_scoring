@@ -28,6 +28,7 @@ def accuracy(predict, target):
 
 
 
+
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Simple GRU')
     parser.add_argument("--data_dir", "-d_dir",type=str, default=path_join("..", "data", "customers"), help="Directory containing dataset file")
@@ -39,17 +40,17 @@ def __pars_args__():
 
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
 
-    parser.add_argument('--batch_size', type=int, default=30, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
-    parser.add_argument('--feature_size', type=int, default=1, help='Feature size.')
-    parser.add_argument('--memory_size', type=list, default=[1024, 518], help='Hidden state memory size.')
+    parser.add_argument('--feature_size', type=int, default=200, help='Feature size.')
+    parser.add_argument('--memory_size', type=list, default=[512, 256], help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
 
-    parser.add_argument('-lr', '--learning_rate', type=float, default=0.0002, help='learning rate (default: 0.001)')
+    parser.add_argument('-lr', '--learning_rate', type=float, default=0.001, help='learning rate (default: 0.001)')
     parser.add_argument('--epsilon', type=float, default=0.1, help='Epsilon value for Adam Optimizer.')
     parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
-    parser.add_argument('--n_iter', type=int, default=500, help="Iteration number.")
+    parser.add_argument('--n_iter', type=int, default=131, help="Iteration number.")
 
 
     parser.add_argument('--train', default=True, help='if we want to update the master weights')
@@ -58,15 +59,14 @@ def __pars_args__():
 
 if __name__ == "__main__":
     args = __pars_args__()
-    model = SimpleGRU(args.feature_size, args.memory_size, 1, args.output_size, args.batch_size,
+    model = SimpleGRU(args.feature_size, args.memory_size, 2, args.output_size, args.batch_size,
                       dropout=args.drop_prob)
-    criterion = torch.nn.MSELoss()
 
-    train_dataset = TestDataset(10)
-    eval_dataset = TestDataset(10)
+    # train_dataset = TestDataset(10)
+    # eval_dataset = TestDataset(10)
 
-    # train_dataset = CustomerDataset(args.data_dir,  args.eval_file_name)
-    # eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
+    train_dataset = CustomerDataset(args.data_dir,  args.train_file_name)
+    eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
 
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
@@ -77,8 +77,7 @@ if __name__ == "__main__":
 
     if args.use_cuda:
         model.cuda()
-        criterion.cuda()
-    optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
 
 
@@ -87,7 +86,7 @@ if __name__ == "__main__":
     eval_number = 0
     total_loss = torch.FloatTensor()
     eval_loss = torch.FloatTensor()
-    for i_iter in range(1, args.n_iter):
+    for i_iter in range(args.n_iter):
         iter_loss = 0
         model.train()
         hidden = model.init_hidden(args.batch_size)
@@ -125,7 +124,7 @@ if __name__ == "__main__":
         # plot loss
         vis.line(
             Y=total_loss,
-            X=torch.LongTensor(range(i_iter)),
+            X=torch.LongTensor(range(i_iter+1)),
              opts=dict(legend=["loss"],
                        title="Simple GRU training loss {}".format(EXP_NAME),
                        showlegend=True),
@@ -133,9 +132,9 @@ if __name__ == "__main__":
 
 
         # EVAL
-        if i_iter % 10 == 0:
+        if i_iter % 10 == 0 and i_iter > 0:
             eval_number += 1
-            acc = 0
+            performance = 0
             
             model.eval()
             hidden = model.init_hidden(args.eval_batch_size)
@@ -151,19 +150,19 @@ if __name__ == "__main__":
 
                 predict, hidden = model.forward(b_input_sequence, hidden)
 
-                acc += accuracy(predict.squeeze(), b_target_sequence.squeeze())
+                performance += torch.nn.functional.mse_loss(predict.squeeze(), b_target_sequence.squeeze())
 
-            acc /= i_batch
+            performance /= i_batch
 
             if args.use_cuda:
-                eval_loss = torch.cat((eval_loss, acc.data.cpu()))
+                eval_loss = torch.cat((eval_loss, performance.data.cpu()))
             else:
-                eval_loss = torch.cat((eval_loss, acc.data))
+                eval_loss = torch.cat((eval_loss, performance.data))
 
             vis.line(
                 Y=eval_loss,
                 X=torch.LongTensor(range(eval_number)),
-                opts=dict(legend=["Accuracy ", ],
+                opts=dict(legend=["MSE", ],
                           title="Simple GRU eval error",
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
