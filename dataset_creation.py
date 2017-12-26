@@ -164,7 +164,7 @@ def format_attribute(attribute, ateco_des, sea_des):
 
 
 if __name__ == "__main__":
-    customer_data = pickle.load(open(path_join("./data", "customers", "customers_attribute_risk.bin"), "rb"))
+    customer_data = pickle.load(open(path_join("./data", "customers", "customers_attribute_risk_neighbor.bin"), "rb"))
     customer_formated_data = {}
 
     ateco_des = get_ateco_description()
@@ -199,10 +199,11 @@ if __name__ == "__main__":
     pickle.dump(SAE_DICT, open(path_join("./data", "customers", "dicts", "sae_dict.bin"), "wb"))
     pickle.dump(US_DICT, open(path_join("./data", "customers", "dicts", "uncollectable_status_dict.bin"), "wb"))
     pickle.dump(ZIPCODE_DICT, open(path_join("./data", "customers", "dicts", "zipcode_dict.bin"), "wb"))
+    pickle.dump(SEGMENTO_DICT, open(path_join("./data", "customers", "dicts", "segmento_dict.bin"), "wb"))
 
     pickle.dump(customer_formated_data, open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "wb"))
 
-    customer_formated_data = pickle.load(open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "rb"))
+    # customer_formated_data = pickle.load(open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "rb"))
 
     training_sample = random.sample(customer_formated_data.items(), 18000)
     training_data = []

@@ -13,7 +13,7 @@ from random import randint
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
 
-RISK_ATTRIBUTE = [# "segmento",
+RISK_ATTRIBUTE = ["segmento",
                   "class_scoring_risk", "val_scoring_risk",
                   "class_scoring_ai", "val_scoring_ai",
                   "class_scoring_bi", "val_scoring_bi",
@@ -29,6 +29,19 @@ DATE_FORMAT = "%Y-%m-%d"
 
 T_risk = namedtuple("T_risk", RISK_ATTRIBUTE)
 T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
+
+
+def mse(input, target):
+    return torch.mean((input - target) ** 2)
+
+def rmse(input, target):
+    return torch.pow(mse(input, target), 0.5)
+
+def accuracy(predict, target):
+    correct = (target.eq(predict.round())).sum()
+    return correct.float() / predict.size(0)
+
+
 
 def update_or_plot(i_iter):
     if i_iter == 0:
@@ -56,6 +69,7 @@ class CustomerDataset(Dataset):
         self.max_sae = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("sae")))
         self.max_un_status = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("uncollectable_status")))
         self.max_zipcode = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("zipcode")))
+        self.max_segmento = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("segmento")))
 
     def __extract_sample__(self, customers):
         create_sample = lambda x: CustomerSample(x['customer_id'], [value for timestemp, value in x["risk"].items()], x["attribute"])
@@ -107,12 +121,20 @@ class CustomerDataset(Dataset):
     def __risk_tensor__(self, risk):
         return torch.FloatTensor(risk)
 
+    def __risk_tensor_one_hot__(self, risk):
+        segmento_one_hot = torch.zeros((len(risk), self.max_segmento))
+        segmento_idx = [timestemp.segmento for timestemp in risk]
+        segmento_one_hot[:, segmento_idx] = 1
+
+        return torch.cat((segmento_one_hot,
+                          torch.FloatTensor(list(risk))[:, 1:]), dim=1)
+
     def __len__(self):
         return len(self.customers)
 
     def __getitem__(self, idx):
         customer_id, risk, attribute = self.customers[idx]
-        torch_risk = self.__risk_tensor__(risk[:-1])
+        torch_risk = self.__risk_tensor_one_hot__(risk[:-1])
         torch_attribute = self.__attribute_one_hot_tensor__(attribute)
 
         return (torch.cat((torch_risk, torch_attribute.expand(12, -1)), dim=1),

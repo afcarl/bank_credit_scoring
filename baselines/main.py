@@ -1,4 +1,4 @@
-from helper import CustomerDataset, update_or_plot, TestDataset
+from helper import CustomerDataset, accuracy, rmse, TestDataset
 from os.path import join as path_join
 from torch.utils.data import DataLoader
 from baselines.models import SimpleGRU
@@ -22,12 +22,6 @@ config = {
   'database': 'ml_crif',
 }
 
-def accuracy(predict, target):
-    correct = (target.eq(predict.round())).sum()
-    return correct.float() / predict.size(0)
-
-
-
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Simple GRU')
@@ -38,11 +32,11 @@ def __pars_args__():
                         default="eval_customers_formatted_attribute_risk.bin",
                         help="File name")
 
-    parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
+    parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
 
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
-    parser.add_argument('--feature_size', type=int, default=200, help='Feature size.')
+    parser.add_argument('--feature_size', type=int, default=184, help='Feature size.')
     parser.add_argument('--memory_size', type=list, default=[512, 256], help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
@@ -117,7 +111,7 @@ if __name__ == "__main__":
         if args.use_cuda:
             total_loss = torch.cat((total_loss, iter_loss.data.cpu()))
         else:
-            total_loss = torch.cat(total_loss, iter_loss.data)
+            total_loss = torch.cat((total_loss, iter_loss.data))
 
         print(iter_loss.data)
 
@@ -150,7 +144,7 @@ if __name__ == "__main__":
 
                 predict, hidden = model.forward(b_input_sequence, hidden)
 
-                performance += torch.nn.functional.mse_loss(predict.squeeze(), b_target_sequence.squeeze())
+                performance += rmse(predict.squeeze(), b_target_sequence.squeeze())
 
             performance /= i_batch
 

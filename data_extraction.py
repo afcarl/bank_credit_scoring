@@ -39,60 +39,74 @@ f_parse_date = lambda x: "{}-{}-{}".format(x[:4], x[4:6], x[6:])
 f_check_b_date = lambda x: REF_DATE if x == "" else x
 
 def extract_default_customers_timeseries(cursor):
-    cursor.execute(GET_RISK_USER)
-    customers = {}
-    for row, (customer_id, segmento, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre,
-              val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi,
-              val_scoring_sd, class_scoring_sd, pre_notching) in enumerate(cursor):
-
-        if customer_id in customers:
-            risk_attribute = customers[customer_id]["risk_attribute"]
-            risk_mapping(risk_attribute, segmento, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk,
-                         val_scoring_pre, class_scoring_pre,
-                         val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi,
-                         class_scoring_bi,
-                         val_scoring_sd, class_scoring_sd, pre_notching)
-        else:
-            risk_attribute = OrderedDict()
-            risk_mapping(risk_attribute, segmento, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk,
-                         val_scoring_pre, class_scoring_pre,
-                         val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi,
-                         class_scoring_bi,
-                         val_scoring_sd, class_scoring_sd, pre_notching)
-            customers[customer_id] = dict(risk_attribute=risk_attribute)
-
+    # cursor.execute(GET_RISK_USER)
+    # customers = {}
+    # for row, (customer_id, segmento, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre,
+    #           val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi,
+    #           val_scoring_sd, class_scoring_sd, pre_notching) in enumerate(cursor):
+    #
+    #     if customer_id in customers:
+    #         risk_attribute = customers[customer_id]["risk_attribute"]
+    #         risk_mapping(risk_attribute, segmento, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk,
+    #                      val_scoring_pre, class_scoring_pre,
+    #                      val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi,
+    #                      class_scoring_bi,
+    #                      val_scoring_sd, class_scoring_sd, pre_notching)
+    #     else:
+    #         risk_attribute = OrderedDict()
+    #         risk_mapping(risk_attribute, segmento, f_parse_date(date_ref), val_scoring_risk, class_scoring_risk,
+    #                      val_scoring_pre, class_scoring_pre,
+    #                      val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi,
+    #                      class_scoring_bi,
+    #                      val_scoring_sd, class_scoring_sd, pre_notching)
+    #         customers[customer_id] = dict(risk_attribute=risk_attribute)
+    #
+    #     if row % 100 == 0:
+    #         print(row)
+    # print(len(customers))
+    # pickle.dump(customers, open(path_join("data", "customers", "customers_risk.bin"), "wb"))
+    # for row, customer_id in enumerate(sorted(customers.keys())):
+    #     cursor.execute(GET_CUSTOMER_BY_ID.format(customer_id))
+    #     done = False
+    #     for birth_date, b_partner, cod_uo, zipcode, region, country_code, customer_kind, kind_desc, customer_type, type_desc, uncollectable_status, ateco, sae in cursor:
+    #         node_attribute = dict(
+    #             birth_date=f_parse_date(f_check_b_date(birth_date)),
+    #             b_partner=b_partner,
+    #             cod_uo=cod_uo,
+    #             zipcode=zipcode,
+    #             region=region,
+    #             country_code=country_code,
+    #             customer_kind=customer_kind,
+    #             kind_desc=kind_desc,
+    #             customer_type=customer_type,
+    #             type_desc=type_desc,
+    #             uncollectable_status=uncollectable_status,
+    #             ateco=ateco,
+    #             sae=sae
+    #         )
+    #         customers[customer_id]["node_attribute"] = node_attribute
+    #         done = True
+    #     if not done:
+    #         del customers[customer_id]
+    #     if row % 100 == 0:
+    #         print(row)
+    # print(len(customers))
+    # pickle.dump(customers, open(path_join("data", "customers", "customers_attribute_risk.bin"), "wb"))
+    customers = pickle.load(open(path_join("data", "customers", "customers_attribute_risk.bin"), "rb"))
+    for row, (customer_id, customers_attributes) in enumerate(customers.items()):
+        cursor.execute(GET_ALL_CUSTOMER_LINKS_BY_ID.format(customer_id))
+        neighbors = []
+        for neighbor, in cursor:
+            if neighbor in customers:
+                neighbors.append(neighbor)
+        customers_attributes["neighbor"] = neighbors
         if row % 100 == 0:
             print(row)
-    print(len(customers))
-    pickle.dump(customers, open(path_join("data", "customers", "customers_risk.bin"), "wb"))
-    for row, customer_id in enumerate(sorted(customers.keys())):
-        cursor.execute(GET_CUSTOMER_BY_ID.format(customer_id))
-        done = False
-        for birth_date, b_partner, cod_uo, zipcode, region, country_code, customer_kind, kind_desc, customer_type, type_desc, uncollectable_status, ateco, sae in cursor:
-            node_attribute = dict(
-                birth_date=f_parse_date(f_check_b_date(birth_date)),
-                b_partner=b_partner,
-                cod_uo=cod_uo,
-                zipcode=zipcode,
-                region=region,
-                country_code=country_code,
-                customer_kind=customer_kind,
-                kind_desc=kind_desc,
-                customer_type=customer_type,
-                type_desc=type_desc,
-                uncollectable_status=uncollectable_status,
-                ateco=ateco,
-                sae=sae
-            )
-            customers[customer_id]["node_attribute"] = node_attribute
-            done = True
-        if not done:
-            del customers[customer_id]
-        if row % 100 == 0:
-            print(row)
-    print(len(customers))
 
-    pickle.dump(customers, open(path_join("data", "customers", "customers_attribute_risk.bin"), "wb"))
+    pickle.dump(customers, open(path_join("data", "customers", "customers_attribute_risk_neighbor.bin"), "wb"))
+
+
+
 
 def risk_mapping(risk_attribute, segmento, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_pre, class_scoring_pre,
                  val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi,
