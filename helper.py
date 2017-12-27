@@ -30,6 +30,7 @@ DATE_FORMAT = "%Y-%m-%d"
 T_risk = namedtuple("T_risk", RISK_ATTRIBUTE)
 T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
 CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
+PackedNeighbor = namedtuple('PackedNeighbor', ['neighbors', 'seq_len'])
 
 def mse(input, target):
     return torch.mean((input - target) ** 2)
@@ -135,11 +136,16 @@ class AttributeToTensor(object):
                           un_status_one_hot
                           ))
 
-def get_embeddings(base_path, file_name, embedding_dim, risk_tsfm, attribute_tsfm):
+def get_embeddings(base_path, file_name, neighbors_file_name, embedding_dim, risk_tsfm, attribute_tsfm):
     customer_embeddings = pickle.load(open(os.path.join(base_path, file_name), "rb"))
-    input_embedding = torch.FloatTensor(len(customer_embeddings), len(TIMESTAMP)-1, embedding_dim).zero_()
-    target_embedding = torch.FloatTensor(len(customer_embeddings)).zero_()
+    customer_neighbor_embeddings = pickle.load(open(os.path.join(base_path, neighbors_file_name), "rb"))
 
+
+    input_embedding = torch.FloatTensor(len(customer_embeddings) + 1, len(TIMESTAMP) - 1, embedding_dim).zero_()
+    target_embedding = torch.FloatTensor(len(customer_embeddings) + 1).zero_()
+    neighbor_embedding = torch.FloatTensor(len(customer_embeddings) + 1, len(customer_neighbor_embeddings[1].neighbors),
+                                           len(TIMESTAMP) - 1, embedding_dim).zero_()
+    seq_len = torch.LongTensor(len(customer_embeddings) + 1).zero_()
     for c_idx, attributes in customer_embeddings.items():
         c_id, c_risk, c_attribute = attributes
 
@@ -149,7 +155,12 @@ def get_embeddings(base_path, file_name, embedding_dim, risk_tsfm, attribute_tsf
         input_embedding[c_idx] = torch.cat((torch_risk[:-1, :], torch_attribute.expand(len(TIMESTAMP)-1, -1)), dim=1)
         target_embedding[c_idx] = c_risk[-1].val_scoring_risk
 
-    return input_embedding, target_embedding
+    for c_idx in customer_embeddings.keys():
+        n_embedding = input_embedding[customer_neighbor_embeddings[c_idx].neighbors]
+        neighbor_embedding[c_idx] = n_embedding
+        seq_len[c_idx] = customer_neighbor_embeddings[c_idx].seq_len
+
+    return input_embedding, target_embedding, neighbor_embedding, seq_len
 
 
 

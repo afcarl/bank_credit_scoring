@@ -6,7 +6,7 @@ from bidict import bidict
 import numpy as np
 from datetime import datetime
 import random
-from helper import TIMESTAMP, T_risk, T_attribute, RISK_ATTRIBUTE, C_ATTRIBUTE, REF_DATE, DATE_FORMAT, CustomerSample
+from helper import TIMESTAMP, T_risk, T_attribute, RISK_ATTRIBUTE, C_ATTRIBUTE, REF_DATE, DATE_FORMAT, CustomerSample, PackedNeighbor
 
 config = {
   'user': 'root',
@@ -172,15 +172,19 @@ if __name__ == "__main__":
 
     ateco_des = get_ateco_description()
     sea_des = get_sea_description()
-
+    max_num_neighbors = 0
     # extract and format customers
     for row, (customer_id, customer_attribute) in enumerate(customer_data.items()):
         try:
             c_risk, c_node, c_neighbors = customer_attribute["risk_attribute"], customer_attribute["node_attribute"], customer_attribute["neighbor"]
+
             c_node["ateco"] = fix_ateco_code(c_node["ateco"])
             c_risk = format_risk(c_risk)
             c_node = format_attribute(c_node, ateco_des, sea_des)
+
             customer_formated_data[customer_id] = CustomerSample(customer_id, [value for timestemp, value in c_risk.items()], c_node)
+            c_idx = len(customerid_to_idx) + 1  # idx = 0 is for null customers
+            customerid_to_idx[customer_id] = c_idx
         except KeyError as ke:
             print("{}\t{}".format(customer_id, ke))
         except Exception as e:
@@ -191,24 +195,29 @@ if __name__ == "__main__":
 
     print(len(customer_formated_data))
 
+
     # init customerid_to_idx
     customeridx_formated_data = {}
     for customer_id in sorted(customer_formated_data.keys()):
-        c_idx = len(customerid_to_idx)
-        customerid_to_idx[customer_id] = c_idx
+        c_idx = customerid_to_idx[customer_id]
         customeridx_formated_data[c_idx] = customer_formated_data[customer_id]
 
-    print(len(customeridx_formated_data))
+        neighbors = []
+        for neighbor_id in customer_data[customer_id]["neighbor"]:
+            if neighbor_id in customerid_to_idx and neighbor_id != customer_id:
+                neighbors.append(neighbor_id)
+        customer_data[customer_id]["neighbor"] = neighbors
+        max_num_neighbors = max(len(neighbors), max_num_neighbors)
 
+    print(len(customeridx_formated_data))
+    print(max_num_neighbors)
     # init customeridx_to_neighborsidx
     for c_idx, (c_id, c_risk, c_node) in sorted(customeridx_formated_data.items()):
         c_neighbors = customer_data[c_id]["neighbor"]
-        neighbors_idx = []
-        for neighbor_id in c_neighbors:
-            if neighbor_id in customerid_to_idx:
-                assert neighbor_id in customer_formated_data
-                neighbors_idx.append(customerid_to_idx[neighbor_id])
-        customeridx_to_neighborsidx[c_idx] = neighbors_idx
+        neighbors_idx = [0] * max_num_neighbors
+        for idx, neighbor_id in enumerate(c_neighbors):
+            neighbors_idx[idx] = customerid_to_idx[neighbor_id]
+        customeridx_to_neighborsidx[c_idx] = PackedNeighbor(neighbors_idx, len(c_neighbors))
 
 
     print(len(customeridx_to_neighborsidx))

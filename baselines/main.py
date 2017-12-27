@@ -11,7 +11,6 @@ import visdom
 from datetime import datetime
 
 vis = visdom.Visdom()
-vis.ipv6 = False
 EXP_NAME = "exp-{}".format(datetime.now())
 
 
@@ -72,9 +71,6 @@ if __name__ == "__main__":
     if args.use_cuda:
         model.cuda()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
-
-
-
 
 
     eval_number = 0
