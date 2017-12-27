@@ -1,7 +1,8 @@
-import torch
 import torch.nn as nn
-
 from torch.autograd import Variable
+
+
+
 
 class SimpleGRU(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""

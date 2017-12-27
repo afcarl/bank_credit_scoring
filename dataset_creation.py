@@ -6,7 +6,7 @@ from bidict import bidict
 import numpy as np
 from datetime import datetime
 import random
-from helper import TIMESTAMP, T_risk, T_attribute, RISK_ATTRIBUTE, C_ATTRIBUTE, REF_DATE, DATE_FORMAT
+from helper import TIMESTAMP, T_risk, T_attribute, RISK_ATTRIBUTE, C_ATTRIBUTE, REF_DATE, DATE_FORMAT, CustomerSample
 
 config = {
   'user': 'root',
@@ -96,7 +96,7 @@ def get_day_diff(birth_date):
     '''
     r_date = datetime.strptime(REF_DATE, DATE_FORMAT)
     b_date = datetime.strptime(birth_date, DATE_FORMAT)
-    return (r_date - b_date).days / 7
+    return (r_date - b_date).days / 365.2425
 
 def fix_ateco_code(ateco):
     return ateco.replace("X", "")
@@ -165,20 +165,22 @@ def format_attribute(attribute, ateco_des, sea_des):
 
 if __name__ == "__main__":
     customer_data = pickle.load(open(path_join("./data", "customers", "customers_attribute_risk_neighbor.bin"), "rb"))
+    print(len(customer_data))
     customer_formated_data = {}
+    customerid_to_idx = bidict()
+    customeridx_to_neighborsidx = {}
 
     ateco_des = get_ateco_description()
     sea_des = get_sea_description()
-    for row, customer_id in enumerate(sorted(customer_data.keys())):
+
+    # extract and format customers
+    for row, (customer_id, customer_attribute) in enumerate(customer_data.items()):
         try:
-            customer_risk, customer_attribute = customer_data[customer_id]["risk_attribute"], customer_data[customer_id]["node_attribute"]
-            customer_attribute["ateco"] = fix_ateco_code(customer_attribute["ateco"])
-
-            customer_risk = format_risk(customer_risk)
-            customer_attribute = format_attribute(customer_attribute, ateco_des, sea_des)
-
-            customer_formated_data[customer_id] = dict(risk=customer_risk,
-                                                       attribute=customer_attribute)
+            c_risk, c_node, c_neighbors = customer_attribute["risk_attribute"], customer_attribute["node_attribute"], customer_attribute["neighbor"]
+            c_node["ateco"] = fix_ateco_code(c_node["ateco"])
+            c_risk = format_risk(c_risk)
+            c_node = format_attribute(c_node, ateco_des, sea_des)
+            customer_formated_data[customer_id] = CustomerSample(customer_id, [value for timestemp, value in c_risk.items()], c_node)
         except KeyError as ke:
             print("{}\t{}".format(customer_id, ke))
         except Exception as e:
@@ -188,6 +190,28 @@ if __name__ == "__main__":
             print(row)
 
     print(len(customer_formated_data))
+
+    # init customerid_to_idx
+    customeridx_formated_data = {}
+    for customer_id in sorted(customer_formated_data.keys()):
+        c_idx = len(customerid_to_idx)
+        customerid_to_idx[customer_id] = c_idx
+        customeridx_formated_data[c_idx] = customer_formated_data[customer_id]
+
+    print(len(customeridx_formated_data))
+
+    # init customeridx_to_neighborsidx
+    for c_idx, (c_id, c_risk, c_node) in sorted(customeridx_formated_data.items()):
+        c_neighbors = customer_data[c_id]["neighbor"]
+        neighbors_idx = []
+        for neighbor_id in c_neighbors:
+            if neighbor_id in customerid_to_idx:
+                assert neighbor_id in customer_formated_data
+                neighbors_idx.append(customerid_to_idx[neighbor_id])
+        customeridx_to_neighborsidx[c_idx] = neighbors_idx
+
+
+    print(len(customeridx_to_neighborsidx))
 
     pickle.dump(ATECO_DICT, open(path_join("./data", "customers", "dicts", "ateco_dict.bin"), "wb"))
     pickle.dump(B_PARTNER_DICT, open(path_join("./data", "customers", "dicts", "b_partner_dict.bin"), "wb"))
@@ -201,29 +225,31 @@ if __name__ == "__main__":
     pickle.dump(ZIPCODE_DICT, open(path_join("./data", "customers", "dicts", "zipcode_dict.bin"), "wb"))
     pickle.dump(SEGMENTO_DICT, open(path_join("./data", "customers", "dicts", "segmento_dict.bin"), "wb"))
 
-    pickle.dump(customer_formated_data, open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "wb"))
+    pickle.dump(customeridx_formated_data, open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "wb"))
+    pickle.dump(customerid_to_idx, open(path_join("./data", "customers", "customerid_to_idx.bin"), "wb"))
+    pickle.dump(customeridx_to_neighborsidx, open(path_join("./data", "customers", "customeridx_to_neighborsidx.bin"), "wb"))
 
     # customer_formated_data = pickle.load(open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "rb"))
 
-    training_sample = random.sample(customer_formated_data.items(), 18000)
-    training_data = []
-    for c_id, att_dict in training_sample:
-        training_data.append(dict(customer_id=c_id, risk=att_dict['risk'], attribute=att_dict['attribute']))
-        del customer_formated_data[c_id]
-
-    eval_sample = random.sample(customer_formated_data.items(), 4000)
-    eval_data = []
-    for c_id, att_dict in eval_sample:
-        eval_data.append(dict(customer_id=c_id, risk=att_dict['risk'], attribute=att_dict['attribute']))
-        del customer_formated_data[c_id]
-
+    test_sample = random.sample(customeridx_formated_data.keys(), 3000)
     test_data = []
-    for c_id, att_dict in customer_formated_data.items():
-        test_data.append(dict(customer_id=c_id, risk=att_dict['risk'], attribute=att_dict['attribute']))
+    for c_idx in test_sample:
+        test_data.append(c_idx)
+        del customeridx_formated_data[c_idx]
+
+    eval_sample = random.sample(customeridx_formated_data.keys(), 3000)
+    eval_data = []
+    for c_idx in eval_sample:
+        eval_data.append(c_idx)
+        del customeridx_formated_data[c_idx]
+
+    train_data = []
+    for c_idx in customeridx_formated_data.keys():
+        train_data.append(c_idx)
 
 
 
-    pickle.dump(training_data,
+    pickle.dump(train_data,
                 open(path_join("./data", "customers", "train_customers_formatted_attribute_risk.bin"), "wb"))
 
     pickle.dump(eval_data,

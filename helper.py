@@ -29,13 +29,13 @@ DATE_FORMAT = "%Y-%m-%d"
 
 T_risk = namedtuple("T_risk", RISK_ATTRIBUTE)
 T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
-
+CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
 
 def mse(input, target):
     return torch.mean((input - target) ** 2)
 
 def rmse(input, target):
-    return torch.pow(mse(input, target), 0.5)
+    return mse(input, target) ** 0.5
 
 def accuracy(predict, target):
     correct = (target.eq(predict.round())).sum()
@@ -53,12 +53,29 @@ def update_or_plot(i_iter):
 def get_max_length(path):
     return len(pickle.load(open(path, "rb")))
 
-CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
-class CustomerDataset(Dataset):
-    def __init__(self, base_path, file_name):
-        self.customers = self.__extract_sample__(pickle.load(open(os.path.join(base_path, file_name), "rb")))
 
 
+class RiskToTensor(object):
+    def __init__(self, base_path):
+        self.max_segmento = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("segmento")))
+        self.transformer = self.__risk_tensor__
+
+    def __call__(self, sample):
+        return self.transformer(sample)
+
+    def __risk_tensor__(self, risk):
+        return torch.FloatTensor(risk)
+
+    def __risk_tensor_one_hot__(self, risk):
+        segmento_one_hot = torch.zeros((len(risk), self.max_segmento))
+        segmento_idx = [timestemp.segmento for timestemp in risk]
+        segmento_one_hot[:, segmento_idx] = 1
+
+        return torch.cat((segmento_one_hot,
+                          torch.FloatTensor(list(risk))[:, 1:]), dim=1)
+
+class AttributeToTensor(object):
+    def __init__(self, base_path):
         self.max_ateco = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("ateco")))
         self.max_b_partner = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("b_partner")))
         self.max_c_kind = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("c_kind")))
@@ -67,13 +84,19 @@ class CustomerDataset(Dataset):
         self.max_country_code = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("country_code")))
         self.max_region = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("region")))
         self.max_sae = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("sae")))
-        self.max_un_status = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("uncollectable_status")))
+        self.max_un_status = get_max_length(
+            os.path.join(base_path, "dicts", "{}_dict.bin".format("uncollectable_status")))
         self.max_zipcode = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("zipcode")))
-        self.max_segmento = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("segmento")))
 
-    def __extract_sample__(self, customers):
-        create_sample = lambda x: CustomerSample(x['customer_id'], [value for timestemp, value in x["risk"].items()], x["attribute"])
-        return [create_sample(customer_att) for customer_att in customers]
+        self.transformer = self.__attribute_tensor__
+
+    def __call__(self, sample):
+        return self.transformer(sample)
+
+    def __attribute_tensor__(self, attribute):
+        return torch.FloatTensor([attribute.ateco, attribute.birth_date, attribute.zipcode, attribute.b_partner,
+                                  attribute.customer_kind, attribute.customer_type, attribute.cod_uo,
+                                  attribute.country_code, attribute.region, attribute.sae, attribute.uncollectable_status])
 
     def __attribute_one_hot_tensor__(self, attribute):
 
@@ -112,33 +135,34 @@ class CustomerDataset(Dataset):
                           un_status_one_hot
                           ))
 
-    def __attribute_tensor__(self, attribute):
-        return torch.FloatTensor([attribute.ateco, attribute.birth_date, attribute.zipcode, attribute.b_partner,
-                                  attribute.customer_kind, attribute.customer_type, attribute.cod_uo,
-                                  attribute.country_code, attribute.region, attribute.sae, attribute.uncollectable_status])
+def get_embeddings(base_path, file_name, embedding_dim, risk_tsfm, attribute_tsfm):
+    customer_embeddings = pickle.load(open(os.path.join(base_path, file_name), "rb"))
+    input_embedding = torch.FloatTensor(len(customer_embeddings), len(TIMESTAMP)-1, embedding_dim).zero_()
+    target_embedding = torch.FloatTensor(len(customer_embeddings)).zero_()
+
+    for c_idx, attributes in customer_embeddings.items():
+        c_id, c_risk, c_attribute = attributes
+
+        torch_risk = risk_tsfm(c_risk)
+        torch_attribute = attribute_tsfm(c_attribute)
+
+        input_embedding[c_idx] = torch.cat((torch_risk[:-1, :], torch_attribute.expand(len(TIMESTAMP)-1, -1)), dim=1)
+        target_embedding[c_idx] = c_risk[-1].val_scoring_risk
+
+    return input_embedding, target_embedding
 
 
-    def __risk_tensor__(self, risk):
-        return torch.FloatTensor(risk)
 
-    def __risk_tensor_one_hot__(self, risk):
-        segmento_one_hot = torch.zeros((len(risk), self.max_segmento))
-        segmento_idx = [timestemp.segmento for timestemp in risk]
-        segmento_one_hot[:, segmento_idx] = 1
-
-        return torch.cat((segmento_one_hot,
-                          torch.FloatTensor(list(risk))[:, 1:]), dim=1)
+class CustomerDataset(Dataset):
+    def __init__(self, base_path, file_name):
+        self.customers_list = torch.LongTensor(pickle.load(open(os.path.join(base_path, file_name), "rb")))
 
     def __len__(self):
-        return len(self.customers)
+        return len(self.customers_list)
 
     def __getitem__(self, idx):
-        customer_id, risk, attribute = self.customers[idx]
-        torch_risk = self.__risk_tensor_one_hot__(risk[:-1])
-        torch_attribute = self.__attribute_one_hot_tensor__(attribute)
-
-        return (torch.cat((torch_risk, torch_attribute.expand(12, -1)), dim=1),
-                torch.FloatTensor([risk[-1].val_scoring_risk]))
+        c_idx = self.customers_list[idx]
+        return c_idx
 
 
 class TestDataset(Dataset):
