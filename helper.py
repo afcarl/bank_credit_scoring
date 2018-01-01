@@ -140,19 +140,22 @@ def get_embeddings(base_path, file_name, neighbors_file_name, embedding_dim, ris
     customer_embeddings = pickle.load(open(os.path.join(base_path, file_name), "rb"))
     customer_neighbor_embeddings = pickle.load(open(os.path.join(base_path, neighbors_file_name), "rb"))
 
+    ts_len = len(TIMESTAMP) - 1 # time sequence embedding
+    cs_len = len(customer_embeddings) + 1 # number of contomers + 1 (null customers => idx = 0)
 
-    input_embedding = torch.FloatTensor(len(customer_embeddings) + 1, len(TIMESTAMP) - 1, embedding_dim).zero_()
-    target_embedding = torch.FloatTensor(len(customer_embeddings) + 1).zero_()
-    neighbor_embedding = torch.FloatTensor(len(customer_embeddings) + 1, len(customer_neighbor_embeddings[1].neighbors),
-                                           len(TIMESTAMP) - 1, embedding_dim).zero_()
-    seq_len = torch.LongTensor(len(customer_embeddings) + 1).zero_()
+    input_embedding = torch.FloatTensor(cs_len, ts_len, embedding_dim).zero_()
+    target_embedding = torch.FloatTensor(cs_len).zero_()
+    neighbor_embedding = torch.FloatTensor(cs_len, len(customer_neighbor_embeddings[1].neighbors),
+                                           ts_len, embedding_dim).zero_()
+    seq_len = torch.LongTensor(cs_len).zero_()
+
     for c_idx, attributes in customer_embeddings.items():
         c_id, c_risk, c_attribute = attributes
 
         torch_risk = risk_tsfm(c_risk)
         torch_attribute = attribute_tsfm(c_attribute)
 
-        input_embedding[c_idx] = torch.cat((torch_risk[:-1, :], torch_attribute.expand(len(TIMESTAMP)-1, -1)), dim=1)
+        input_embedding[c_idx] = torch.cat((torch_risk[:ts_len, :], torch_attribute.expand(ts_len, torch_attribute.size(0))), dim=1)
         target_embedding[c_idx] = c_risk[-1].val_scoring_risk
 
     for c_idx in customer_embeddings.keys():

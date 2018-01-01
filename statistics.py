@@ -1,6 +1,6 @@
 import mysql.connector
 import pickle
-import networkx as nx
+import helper as h
 from collections import OrderedDict
 import numpy as np
 import visdom
@@ -8,7 +8,7 @@ from itertools import tee
 from bidict import bidict
 from itertools import cycle
 from os.path import join as path_join
-
+import torch
 vis = visdom.Visdom()
 
 config = {
@@ -33,10 +33,10 @@ GET_ALL_RISK_LINKS_BY_CUSTOMERID = "SELECT DISTINCT cl.customerid, cl.customerid
 GET_DEFAULT_RISK_CUSTOMER = "SELECT r.customerid, r.date_ref, r.val_scoring_risk, r.class_scoring_risk, r.val_scoring_pre, r.class_scoring_pre, r.val_scoring_ai, r.class_scoring_ai, r.val_scoring_cr, r.class_scoring_cr, r.val_scoring_bi, r.class_scoring_bi, r.val_scoring_sd, r.class_scoring_sd, r.pre_notching  FROM risk AS r  WHERE r.customerid IN (SELECT DISTINCT r1.customerid FROM ml_crif.risk AS r1 WHERE r1.val_scoring_risk=100) ORDER BY r.customerid asc, r.date_ref asc"
 
 GET_RISK_CUSTOMER_BY_ACCORDATO = "SELECT r.customerid FROM risk AS r LEFT OUTER JOIN features AS f ON r.bankid = f.bankid AND r.customerid = f.customerid AND r.date_ref = f.date_ref WHERE f.cod_feature = 'CR0018' AND r.val_scoring_risk = 100 ORDER BY f.value1 desc, r.customerid asc, r.date_ref desc LIMIT 1000"
-
+GET_ACCORDATO_MASSIMO_BY_CUSTOMERID = "SELECT f.customerid, f.date_ref, f.value1, f.value2, f.cod_feature FROM features AS f WHERE f.cod_feature IN ('CR0018', 'CR0021', 'CR0040') AND f.customerid={}"
 
 cnx = mysql.connector.connect(**config)
-cursor = cnx.cursor()
+cursor = cnx.cursor(buffered=True)
 
     
 def recompute_diff_data(customer_data, customer_neigh_data):
@@ -94,7 +94,7 @@ def compute_time_mean_difference(customer_diff_mean_neighbor_data):
     return np.mean(customer_diff_mean_neighbor_data, axis=0)
 
 
-def draw_color_line(X, Y, colors=['rgba(255, 178, 102, 1)',
+def draw_color_line(X, Y, legends, line_types, colors=['rgba(255, 178, 102, 1)',
                                  'rgba(204, 102, 0, 1)',
                                  'rgba(102, 255, 255, 1)',
                                  'rgba(0, 0, 255, 1)',
@@ -106,16 +106,17 @@ def draw_color_line(X, Y, colors=['rgba(255, 178, 102, 1)',
                                  'rgba(16, 111, 0, 1)',
                                   'rgba(102, 178, 255, 1)'], title='', xlabel='', ylabel=''):
     traces = []
-    for row, (y, color) in enumerate(zip(Y, cycle(colors))):
-        traces.append(dict(
-            x=X,
-            y=y.tolist(),
-            mode='lines',
-            type='line',
-            line=dict(color=color, width=1),
-            connectgaps=True,
-            name=row
-        ))
+    for ys, legend, line_type in zip(Y, legends, line_types):
+        for row, (y, color) in enumerate(zip(ys, cycle(colors))):
+            traces.append(dict(
+                x=X,
+                y=y.tolist(),
+                mode='lines',
+                type='line',
+                line=dict(color=color, width=1, dash=line_type),
+                connectgaps=True,
+                name="{}-{}".format(legend, row)
+            ))
 
 
 
@@ -284,32 +285,71 @@ def customer_neighbor_difference():
                 open("new_np_risk_all_risk_by_timestamp_wrt_neighbor.bin", "wb"))
 
 def plot_customer_default_timeseries(np_customer_data):
-    np_default_customers = np_customer_data[~np.isnan(np_customer_data).any(axis=1).any(axis=1)]
-    draw_color_line(X=TIMESTAMP, Y=np_default_customers[:, :, 0],
+    # np_default_customers = np_customer_data[~np.isnan(np_customer_data).any(axis=1).any(axis=1)]
+    draw_color_line(X=TIMESTAMP, Y=[np_customer_data[:, :, 2].numpy(), np_customer_data[:, :, -2].numpy()],
+                    legends=["risk", "accordato"],
+                    line_types=["", "dash"],
                     title="Risk timeseries for eventually default customers",
                     xlabel='Timestemp',
                     ylabel='Risk value'
                     )
-    print(np_default_customers[:100, :])
+    print(np_customer_data[:100, :])
 
+
+f_parse_date = lambda x: "{}-{}-{}".format(x[:4], x[4:6], x[6:])
 if __name__ == "__main__":
     try:
-        risky_customer = set()
-        LIMIT = 10
-        cursor.execute(GET_RISK_CUSTOMER_BY_ACCORDATO)
-        for customer_id, in cursor:
-            risky_customer.add(customer_id)
-            if len(risky_customer) == LIMIT:
-                break
+        # risky_customer = set()
+        # LIMIT = 10
+        # cursor.execute(GET_RISK_CUSTOMER_BY_ACCORDATO)
+        # for customer_id, in cursor:
+        #     risky_customer.add(customer_id)
+        #     if len(risky_customer) == LIMIT:
+        #         break
+        #
+        # customer_id_2_customer_idx = pickle.load(open(path_join(".", "data", "customers", "customerid_to_idx.bin"), "rb"))
 
+        risky_customer = pickle.load(open("data/customers/temp/risky_customer_10.bin", "rb"))
+        # accordato_embedding = torch.FloatTensor(len(risky_customer), len(TIMESTAMP), 6).zero_()
+        # for idx, c_id in enumerate(sorted(risky_customer)):
+        #     cursor.execute(GET_ACCORDATO_MASSIMO_BY_CUSTOMERID.format(c_id))
+        #     c_accordato = torch.FloatTensor(len(TIMESTAMP), 6).zero_()
+        #     for customer_id, date_ref, value1, value2, cod_feature in cursor:
+        #         if cod_feature == 'CR0021':
+        #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), 2:4] = torch.FloatTensor([value1, value2])
+        #         elif cod_feature == 'CR0040':
+        #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), 4:] = torch.FloatTensor([value1, value2])
+        #         else:
+        #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), :2] = torch.FloatTensor([value1, value2])
+        #     accordato_embedding[idx] = c_accordato
+        #     print(idx)
+        #
+        #
+        # pickle.dump(accordato_embedding, open("data/customers/temp/accordato_embedding.bin","wb"))
+        # pickle.dump(risky_customer, open("data/customers/temp/risky_customer_10.bin", "wb"))
 
+        customer_id_2_customer_idx = pickle.load(open(path_join(".", "data", "customers", "customerid_to_idx.bin"), "rb"))
+
+        accordato_embedding = pickle.load(open("data/customers/temp/accordato_embedding.bin", "rb"))
+
+        risk_tsfm = h.RiskToTensor(path_join(".", "data", "customers"))
+        attribute_tsfm = h.AttributeToTensor(path_join(".", "data", "customers"))
+        input_embeddings, target_embeddings, neighbor_embeddings, seq_len = h.get_embeddings(path_join(".", "data", "customers"),
+                                                                                             "customers_formatted_attribute_risk.bin",
+                                                                                             "customeridx_to_neighborsidx.bin",
+                                                                                             24,
+                                                                                             risk_tsfm,
+                                                                                             attribute_tsfm)
+        customer_idx = [customer_id_2_customer_idx[c_id] for c_id in sorted(risky_customer)]
+        plot_customer_default_timeseries(torch.cat((input_embeddings[customer_idx], torch.log(accordato_embedding+1)), dim=2))
 
         # customer_data = pickle.load(open(path_join("./data", "customers", "customers_risk.bin"), "rb"))
         # extract_numpy_data_by_selected_timestemp(customer_data)
-        np_customer_data = pickle.load(open("np_risk_customers_by_selected_timestemp.bin", "rb"))
-        customer_to_id = pickle.load(open("customer_to_id.bin", "rb"))
-        risky_customer_idx = np.array([customer_to_id[customer_id] for customer_id in risky_customer])
-        plot_customer_default_timeseries(np_customer_data[risky_customer_idx])
+        # np_customer_data = pickle.load(open("np_risk_customers_by_selected_timestemp.bin", "rb"))
+        # customer_to_id = pickle.load(open("customer_to_id.bin", "rb"))
+        # risky_customer_idx = np.array([customer_to_id[customer_id] for customer_id in risky_customer])
+        #
+        # plot_customer_default_timeseries(np_customer_data[risky_customer_idx])
 
 
 

@@ -1,5 +1,5 @@
 from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor
-from simple_baseline.simpleModels import SimpleNeighborMean
+from simple_baseline.simpleModels import LinearCombinationMean
 import argparse
 from os.path import join as path_join
 from torch.autograd import Variable
@@ -31,7 +31,7 @@ def __pars_args__():
                         help="File name")
     parser.add_argument('--feature_size', type=int, default=2, help='Feature size.')
     parser.add_argument('--embedding_dim', type=int, default=24, help='Embedding size.')
-    parser.add_argument('-lr', '--learning_rate', type=float, default=0.001, help='learning rate (default: 0.001)')
+    parser.add_argument('-lr', '--learning_rate', type=float, default=0.0002, help='learning rate (default: 0.001)')
     parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
     parser.add_argument('--n_iter', type=int, default=131, help="Iteration number.")
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
@@ -52,10 +52,13 @@ if __name__ == "__main__":
     # customer_id_2_customer_idx = pickle.load(open("../data/customers/customerid_to_idx.bin", "rb"))
     # customer_idx_2_neighbors_idx = pickle.load(open("../data/customers/customeridx_to_neighborsidx.bin", "rb"))
 
+    train_dataset = CustomerDataset(args.data_dir, args.train_file_name)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1, drop_last=True)
+
     eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
     eval_dataloader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1,
                                   drop_last=True)
-    model = SimpleNeighborMean(args.feature_size)
+    model = LinearCombinationMean(args.feature_size)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     if args.use_cuda:
@@ -69,7 +72,7 @@ if __name__ == "__main__":
         iter_loss = 0
         model.train()
 
-        for idx, b_index in enumerate(eval_dataloader):
+        for idx, b_index in enumerate(train_dataloader):
             b_input_sequence = Variable(input_embeddings[b_index])
             b_target_sequence = Variable(target_embeddings[b_index])
             b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])

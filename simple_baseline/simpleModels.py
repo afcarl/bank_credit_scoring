@@ -6,10 +6,10 @@ from os.path import join as path_join
 import torch.nn as nn
 
 
-class SimpleNeighborMean(nn.Module):
+class LinearCombinationMean(nn.Module):
     """compute the simple mean of the previous timestemp and perform a linear combination between customers and neighbors"""
     def __init__(self, features_size, output_size=1):
-        super(SimpleNeighborMean, self).__init__()
+        super(LinearCombinationMean, self).__init__()
         self.linear = nn.Linear(features_size, output_size)
         self.criterion = nn.MSELoss()
 

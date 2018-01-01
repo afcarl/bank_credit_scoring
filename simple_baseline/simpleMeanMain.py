@@ -1,5 +1,5 @@
 from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor
-from simple_baseline.simpleModels import SimpleNeighborMean
+from simple_baseline.simpleModels import SimpleMean
 import argparse
 from os.path import join as path_join
 from torch.autograd import Variable
@@ -55,93 +55,18 @@ if __name__ == "__main__":
     eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
     eval_dataloader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1,
                                   drop_last=True)
-    model = SimpleNeighborMean(args.feature_size)
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    model = SimpleMean()
+    error = 0
+    for idx, b_index in enumerate(eval_dataloader):
+        b_input_sequence = Variable(input_embeddings[b_index])
+        b_target_sequence = Variable(target_embeddings[b_index])
+        b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])
+        b_seq_len = Variable(seq_len[b_index])
 
-    if args.use_cuda:
-        model.cuda()
+        b_prediction = model.forward(b_input_sequence)
+        b_error = model.compute_error(b_prediction.squeeze(), b_target_sequence)
+        print(b_error)
+        error += b_error
 
-    eval_number = 0
-    total_loss = torch.FloatTensor()
-    eval_loss = torch.FloatTensor()
-
-    for i_iter in range(args.n_iter):
-        iter_loss = 0
-        model.train()
-
-        for idx, b_index in enumerate(eval_dataloader):
-            b_input_sequence = Variable(input_embeddings[b_index])
-            b_target_sequence = Variable(target_embeddings[b_index])
-            b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])
-            b_seq_len = Variable(seq_len[b_index])
-
-            if args.use_cuda:
-                b_input_sequence = b_input_sequence.cuda()
-                b_target_sequence = b_target_sequence.cuda()
-                b_neighbor_embeddings = b_neighbor_embeddings.cuda()
-                b_seq_len = b_seq_len.cuda()
-
-            optimizer.zero_grad()
-            b_prediction = model.forward(b_input_sequence, b_neighbor_embeddings, b_seq_len)
-            loss = model.compute_loss(b_prediction.squeeze(), b_target_sequence)
-
-            loss.backward()
-            torch.nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
-            optimizer.step()
-
-            iter_loss += loss
-
-        iter_loss /= idx
-        print(iter_loss.data)
-
-        if args.use_cuda:
-            total_loss = torch.cat((total_loss, iter_loss.data.cpu()))
-        else:
-            total_loss = torch.cat((total_loss, iter_loss.data))
-
-        # plot loss
-        vis.line(
-            Y=total_loss,
-            X=torch.LongTensor(range(i_iter + 1)),
-            opts=dict(legend=["loss"],
-                      title="linear combination  training loss {}".format(EXP_NAME),
-                      showlegend=True),
-            win="win:train-{}".format(EXP_NAME))
-
-        # EVAL
-        if i_iter % 10 == 0 and i_iter > 0:
-            eval_number += 1
-            performance = 0
-
-            model.eval()
-            for idx, b_index in enumerate(eval_dataloader):
-                b_input_sequence = Variable(input_embeddings[b_index])
-                b_target_sequence = Variable(target_embeddings[b_index])
-                b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])
-                b_seq_len = Variable(seq_len[b_index])
-
-
-                if args.use_cuda:
-                    b_input_sequence = b_input_sequence.cuda()
-                    b_target_sequence = b_target_sequence.cuda()
-                    b_neighbor_embeddings = b_neighbor_embeddings.cuda()
-                    b_seq_len = b_seq_len.cuda()
-
-                b_prediction = model.forward(b_input_sequence, b_neighbor_embeddings, b_seq_len)
-
-                performance += model.compute_error(b_prediction.squeeze(), b_target_sequence)
-
-            performance /= idx
-
-            if args.use_cuda:
-                eval_loss = torch.cat((eval_loss, performance.data.cpu()))
-            else:
-                eval_loss = torch.cat((eval_loss, performance.data))
-
-            vis.line(
-                Y=eval_loss,
-                X=torch.LongTensor(range(eval_number)),
-                opts=dict(legend=["MSE", ],
-                          title="Simple GRU eval error",
-                          showlegend=True),
-                win="win:eval-{}".format(EXP_NAME))
+    error /= idx
+    print(error)
