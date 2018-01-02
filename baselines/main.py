@@ -35,7 +35,7 @@ def __pars_args__():
                         default="eval_customers_formatted_attribute_risk.bin",
                         help="File name")
 
-    parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
+    parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
 
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
@@ -94,7 +94,7 @@ if __name__ == "__main__":
         model.train()
         hidden = model.init_hidden(args.batch_size)
         # TRAIN
-        for idx, b_index in enumerate(train_dataloader):
+        for b_idx, b_index in enumerate(train_dataloader):
             b_input_sequence = Variable(input_embeddings[b_index])
             b_target_sequence = Variable(target_embeddings[b_index])
             hidden = model.repackage_hidden_state(hidden)
@@ -116,7 +116,7 @@ if __name__ == "__main__":
 
             iter_loss += loss
 
-        iter_loss /= idx
+        iter_loss /= (b_idx+1)
 
         if args.use_cuda:
             total_loss = torch.cat((total_loss, iter_loss.data.cpu()))
@@ -142,7 +142,7 @@ if __name__ == "__main__":
             
             model.eval()
             hidden = model.init_hidden(args.eval_batch_size)
-            for idx, b_index in enumerate(eval_dataloader):
+            for b_idx, b_index in enumerate(eval_dataloader):
                 b_input_sequence = Variable(input_embeddings[b_index])
                 b_target_sequence = Variable(target_embeddings[b_index])
                 hidden = model.repackage_hidden_state(hidden)
@@ -156,7 +156,7 @@ if __name__ == "__main__":
 
                 performance += model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
 
-            performance /= idx
+            performance /= (b_idx+1)
 
             if args.use_cuda:
                 eval_loss = torch.cat((eval_loss, performance.data.cpu()))
