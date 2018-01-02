@@ -1,4 +1,4 @@
-from helper import CustomerDataset, accuracy, rmse, TestDataset
+from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor
 from os.path import join as path_join
 from torch.utils.data import DataLoader
 from baselines.models import SimpleGRU
@@ -25,6 +25,10 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Simple GRU')
     parser.add_argument("--data_dir", "-d_dir",type=str, default=path_join("..", "data", "customers"), help="Directory containing dataset file")
+    parser.add_argument("--customer_file_name", "-c_fn", type=str, default="customers_formatted_attribute_risk.bin",
+                        help="Customer attirbute file name")
+    parser.add_argument("--neighbors_file_name", "-n_fn", type=str, default="customeridx_to_neighborsidx.bin",
+                        help="Customer attirbute file name")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_customers_formatted_attribute_risk.bin",
                         help="File name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str,
@@ -35,6 +39,7 @@ def __pars_args__():
 
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
+    parser.add_argument('--embedding_dim', type=int, default=24, help='Embedding size.')
     parser.add_argument('--feature_size', type=int, default=184, help='Feature size.')
     parser.add_argument('--memory_size', type=list, default=[512, 256], help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
@@ -52,7 +57,15 @@ def __pars_args__():
 
 if __name__ == "__main__":
     args = __pars_args__()
-    model = SimpleGRU(args.feature_size, args.memory_size, 2, args.output_size, args.batch_size,
+    risk_tsfm = RiskToTensor(args.data_dir)
+    attribute_tsfm = AttributeToTensor(args.data_dir)
+    input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir,
+                                                                                       args.customer_file_name,
+                                                                                       args.neighbors_file_name,
+                                                                                       args.embedding_dim,
+                                                                                       risk_tsfm, attribute_tsfm)
+
+    model = SimpleGRU(args.embedding_dim, args.memory_size, 1, args.output_size, args.batch_size,
                       dropout=args.drop_prob)
 
     # train_dataset = TestDataset(10)
@@ -81,8 +94,9 @@ if __name__ == "__main__":
         model.train()
         hidden = model.init_hidden(args.batch_size)
         # TRAIN
-        for i_batch, (b_input_sequence, b_target_sequence) in enumerate(train_dataloader):
-            b_input_sequence, b_target_sequence = Variable(b_input_sequence), Variable(b_target_sequence)
+        for idx, b_index in enumerate(train_dataloader):
+            b_input_sequence = Variable(input_embeddings[b_index])
+            b_target_sequence = Variable(target_embeddings[b_index])
             hidden = model.repackage_hidden_state(hidden)
 
             if args.use_cuda:
@@ -102,7 +116,7 @@ if __name__ == "__main__":
 
             iter_loss += loss
 
-        iter_loss /= i_batch
+        iter_loss /= idx
 
         if args.use_cuda:
             total_loss = torch.cat((total_loss, iter_loss.data.cpu()))
@@ -128,9 +142,9 @@ if __name__ == "__main__":
             
             model.eval()
             hidden = model.init_hidden(args.eval_batch_size)
-            for i_batch, (b_input_sequence, b_target_sequence) in enumerate(eval_dataloader):
-                b_input_sequence = Variable(b_input_sequence, volatile=True)
-                b_target_sequence = Variable(b_target_sequence)
+            for idx, b_index in enumerate(eval_dataloader):
+                b_input_sequence = Variable(input_embeddings[b_index])
+                b_target_sequence = Variable(target_embeddings[b_index])
                 hidden = model.repackage_hidden_state(hidden)
 
                 if args.use_cuda:
@@ -140,9 +154,9 @@ if __name__ == "__main__":
 
                 predict, hidden = model.forward(b_input_sequence, hidden)
 
-                performance += rmse(predict.squeeze(), b_target_sequence.squeeze())
+                performance += model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
 
-            performance /= i_batch
+            performance /= idx
 
             if args.use_cuda:
                 eval_loss = torch.cat((eval_loss, performance.data.cpu()))

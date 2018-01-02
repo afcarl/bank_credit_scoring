@@ -1,6 +1,6 @@
 import torch.nn as nn
 from torch.autograd import Variable
-
+from helper import rmse
 
 
 
@@ -82,3 +82,6 @@ class SimpleGRU(nn.Module):
     def compute_loss(self, b_predict, b_target):
         """compute the loss"""
         return self.criterion(b_predict, b_target)
+
+    def compute_error(self, predict, target):
+        return rmse(predict, target)
