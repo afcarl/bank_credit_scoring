@@ -1,5 +1,5 @@
-from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor
-from simple_baseline.simpleModels import SimpleMean
+from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor, TIMESTAMP
+from simple_baseline.simpleModels import SimpleMean, SimpleFeatureMean
 import argparse
 from os.path import join as path_join
 from torch.autograd import Variable
@@ -29,9 +29,16 @@ def __pars_args__():
                         help="File name")
     parser.add_argument("--customer_neighbors_file", "-c_to_n_fn", type=str, default="customeridx_to_neighborsidx.bin",
                         help="File name")
-    parser.add_argument('--feature_size', type=int, default=2, help='Feature size.')
+    parser.add_argument('--input_sequence_len', type=int, default=12, help='Input sequence length.')
+    parser.add_argument('--output_sequence_len', type=int, default=5, help='output sequence length.')
     parser.add_argument('--embedding_dim', type=int, default=24, help='Embedding size.')
-    parser.add_argument('-lr', '--learning_rate', type=float, default=0.001, help='learning rate (default: 0.001)')
+
+
+    parser.add_argument('--input_size', type=int, default=6, help='Input size.')
+    parser.add_argument('--output_size', type=int, default=1, help='Output size.')
+    parser.add_argument('--features_len', type=int, default=2, help='Output features length.')
+
+    parser.add_argument('-lr', '--learning_rate', type=float, default=0.0025, help='learning rate (default: 0.001)')
     parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
     parser.add_argument('--n_iter', type=int, default=131, help="Iteration number.")
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
@@ -47,26 +54,119 @@ if __name__ == "__main__":
                                                                                        args.customer_file_name,
                                                                                        args.neighbors_file_name,
                                                                                        args.embedding_dim,
+                                                                                       args.input_sequence_len,
+                                                                                       args.output_sequence_len,
                                                                                        risk_tsfm, attribute_tsfm)
 
     # customer_id_2_customer_idx = pickle.load(open("../data/customers/customerid_to_idx.bin", "rb"))
     # customer_idx_2_neighbors_idx = pickle.load(open("../data/customers/customeridx_to_neighborsidx.bin", "rb"))
+    train_dataset = CustomerDataset(args.data_dir, args.train_file_name)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1, drop_last=True)
 
     eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
     eval_dataloader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1,
-                                  drop_last=True)
-    model = SimpleMean()
-    error = 0
-    for idx, b_index in enumerate(eval_dataloader):
-        b_input_sequence = Variable(input_embeddings[b_index])
-        b_target_sequence = Variable(target_embeddings[b_index])
-        b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])
-        b_seq_len = Variable(seq_len[b_index])
+                                 drop_last=True)
+    model = SimpleFeatureMean(args.input_size, args.output_size, args.input_sequence_len,  args.output_sequence_len, args.features_len)
+    # error = 0
+    # for idx, b_index in enumerate(eval_dataloader):
+    #     b_input_sequence = Variable(input_embeddings[b_index])
+    #     b_target_sequence = Variable(target_embeddings[b_index])
+    #     b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])
+    #     b_seq_len = Variable(seq_len[b_index])
+    #
+    #     b_prediction = model.forward(b_input_sequence[:, :, 2])
+    #     b_error = model.compute_error(b_prediction.squeeze(), b_target_sequence)
+    #     print(b_error)
+    #     error += b_error
+    #
+    # error /= idx
+    # print(error)
 
-        b_prediction = model.forward(b_input_sequence)
-        b_error = model.compute_error(b_prediction.squeeze(), b_target_sequence)
-        print(b_error)
-        error += b_error
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    if args.use_cuda:
+        model.cuda()
 
-    error /= idx
-    print(error)
+    eval_number = 0
+    total_loss = torch.FloatTensor()
+    eval_loss = torch.FloatTensor()
+
+    for i_iter in range(args.n_iter):
+        iter_loss = 0
+        model.train()
+
+        for idx, b_index in enumerate(train_dataloader):
+            b_input_sequence = Variable(input_embeddings[b_index])
+            b_target_sequence = Variable(target_embeddings[b_index])
+            b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])
+            b_seq_len = Variable(seq_len[b_index])
+
+            if args.use_cuda:
+                b_input_sequence = b_input_sequence.cuda()
+                b_target_sequence = b_target_sequence.cuda()
+                b_neighbor_embeddings = b_neighbor_embeddings.cuda()
+                b_seq_len = b_seq_len.cuda()
+
+            optimizer.zero_grad()
+            f_input = model.neighborMeanForward(b_input_sequence[:, :, 2], b_neighbor_embeddings[:, :, :, 2], b_seq_len)
+            b_prediction = model.forward(f_input)
+            loss = model.compute_loss(b_prediction.squeeze(), b_target_sequence)
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
+            optimizer.step()
+
+            iter_loss += loss
+
+        iter_loss /= idx
+        print(iter_loss.data)
+
+        if args.use_cuda:
+            total_loss = torch.cat((total_loss, iter_loss.data.cpu()))
+        else:
+            total_loss = torch.cat((total_loss, iter_loss.data))
+
+        # plot loss
+        vis.line(
+            Y=total_loss,
+            X=torch.LongTensor(range(i_iter + 1)),
+            opts=dict(legend=["loss-MSE"],
+                      title="simple mean with OutFeatures with Neighbors {}".format(EXP_NAME),
+                      showlegend=True),
+            win="win:train-{}".format(EXP_NAME))
+
+        # EVAL
+        if i_iter % 10 == 0 and i_iter > 0:
+            eval_number += 1
+            performance = 0
+            for idx, b_index in enumerate(eval_dataloader):
+                b_input_sequence = Variable(input_embeddings[b_index])
+                b_target_sequence = Variable(target_embeddings[b_index])
+                b_neighbor_embeddings = Variable(neighbor_embeddings[b_index])
+                b_seq_len = Variable(seq_len[b_index])
+
+                if args.use_cuda:
+                    b_input_sequence = b_input_sequence.cuda()
+                    b_target_sequence = b_target_sequence.cuda()
+                    b_neighbor_embeddings = b_neighbor_embeddings.cuda()
+                    b_seq_len = b_seq_len.cuda()
+
+                f_input = model.neighborMeanForward(b_input_sequence[:, :, 2], b_neighbor_embeddings[:, :, :, 2], b_seq_len)
+                b_prediction = model.forward(f_input)
+                performance += model.compute_error(b_prediction.squeeze(), b_target_sequence)
+
+            model.eval()
+
+            performance /= idx
+
+            if args.use_cuda:
+                eval_loss = torch.cat((eval_loss, performance.data.cpu()))
+            else:
+                eval_loss = torch.cat((eval_loss, performance.data))
+
+            vis.line(
+                Y=eval_loss,
+                X=torch.LongTensor(range(eval_number)),
+                opts=dict(legend=["RMSE"],
+                          title="simple mean with OutFeatures with Neighbors",
+                          showlegend=True),
+                win="win:eval-{}".format(EXP_NAME))

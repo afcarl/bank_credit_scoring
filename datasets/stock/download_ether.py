@@ -1,5 +1,5 @@
 import pandas as pd
-from download_stock.utils import fetch_data_by_exchange
+from datasets.stock.utils import fetch_data_by_exchange
 from os.path import join as path_join
 import time as T
 import datetime as DT

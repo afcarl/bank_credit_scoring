@@ -289,7 +289,7 @@ def plot_customer_default_timeseries(np_customer_data):
     draw_color_line(X=TIMESTAMP, Y=[np_customer_data[:, :, 2].numpy(), np_customer_data[:, :, -2].numpy()],
                     legends=["risk", "accordato"],
                     line_types=["", "dash"],
-                    title="Risk timeseries for eventually default customers",
+                    title="Risk csvs for eventually default customers",
                     xlabel='Timestemp',
                     ylabel='Risk value'
                     )
