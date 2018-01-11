@@ -8,9 +8,9 @@ from os import path
 BASE_DIR = path.join("..", "..", "data", "sintetic")
 
 def generate_embedding(dim, num_neighbors):
-    input_embeddings = torch.FloatTensor(dim[0], dim[1]).normal_(5, 4).int().float()
+    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).normal_(5, 4).int().float()
     input_embeddings = torch.clamp(input_embeddings, 0, 10)
-    neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1]).zero_()
+    neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
     target_embeddings = torch.FloatTensor(dim[0]).zero_()
 
     neighbors = {}
@@ -18,9 +18,13 @@ def generate_embedding(dim, num_neighbors):
         neighbors[idx] = random.sample(range(input_embeddings.size(0)), num_neighbors)
         n_embedding = torch.stack([input_embeddings[n_idx] for n_idx in neighbors[idx]], dim=0)
         neighbor_embeddings[idx] = n_embedding
-        target_embeddings[idx] = torch.mean(n_embedding[:, -2])
 
-    return input_embeddings, neighbor_embeddings, target_embeddings
+        if input_embeddings[idx, -1, 0] >= 5:
+            target_embeddings[idx] = torch.mean(n_embedding[int(num_neighbors/2):, -1])
+        else:
+            target_embeddings[idx] = torch.mean(n_embedding[:int(num_neighbors/2), -1])
+
+    return input_embeddings, target_embeddings, neighbor_embeddings
 
 
 def split_training_test_dataset(_ids, e_t_size=25000):
