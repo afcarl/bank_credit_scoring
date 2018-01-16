@@ -18,11 +18,11 @@ def generate_embedding(dim, num_neighbors):
         neighbors[idx] = random.sample(range(input_embeddings.size(0)), num_neighbors)
         n_embedding = torch.stack([input_embeddings[n_idx] for n_idx in neighbors[idx]], dim=0)
         neighbor_embeddings[idx] = n_embedding
-
-        if input_embeddings[idx, -1, 0] >= 5:
-            target_embeddings[idx] = torch.mean(n_embedding[int(num_neighbors/2):, -1])
-        else:
-            target_embeddings[idx] = torch.mean(n_embedding[:int(num_neighbors/2), -1])
+        target_embeddings[idx] = torch.mean(torch.cat((input_embeddings[idx, -1], n_embedding[:, -1].squeeze()), dim=0))
+        # if input_embeddings[idx, -1, 0] >= 5:
+        #     target_embeddings[idx] = torch.mean(n_embedding[int(num_neighbors/2):, -1])
+        # else:
+        #     target_embeddings[idx] = torch.mean(n_embedding[:int(num_neighbors/2), -1])
 
     return input_embeddings, target_embeddings, neighbor_embeddings
 
@@ -50,13 +50,13 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings = generate_embedding((150000, 10), 4)
+    input_embeddings, target_embeddings, neighbor_embeddings = generate_embedding((12000, 10), 4)
 
-    pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, "input_embeddings.bin")), "wb"))
-    pickle.dump(target_embeddings, open(path.join(BASE_DIR, "target_embeddings.bin"), "wb"))
-    pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, "neighbor_embeddings.bin"), "wb"))
+    pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, "simple_input_embeddings.bin")), "wb"))
+    pickle.dump(target_embeddings, open(path.join(BASE_DIR, "simple_target_embeddings.bin"), "wb"))
+    pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, "simple_neighbor_embeddings.bin"), "wb"))
 
-    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(list(range(input_embeddings.size(0))))
-    pickle.dump(train_dataset, open(path.join(BASE_DIR, "train_dataset.bin"), "wb"))
-    pickle.dump(eval_dataset, open(path.join(BASE_DIR, "eval_dataset.bin"), "wb"))
-    pickle.dump(test_dataset, open(path.join(BASE_DIR, "test_dataset.bin"), "wb"))
+    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(list(range(input_embeddings.size(0))), e_t_size=1000)
+    pickle.dump(train_dataset, open(path.join(BASE_DIR, "simple_train_dataset.bin"), "wb"))
+    pickle.dump(eval_dataset, open(path.join(BASE_DIR, "simple_eval_dataset.bin"), "wb"))
+    pickle.dump(test_dataset, open(path.join(BASE_DIR, "simple_test_dataset.bin"), "wb"))
