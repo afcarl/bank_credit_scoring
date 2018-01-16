@@ -1,129 +1,166 @@
-from torch.utils.data import DataLoader
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-import torch.nn as nn
-import torch
-from torch.autograd import Variable
-import torch.optim as optim
-from helper import NameDataset
+from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor
 from os.path import join as path_join
+from torch.utils.data import DataLoader
+from baselines.models import SimpleGRU
+import torch.optim as optim
+from torch.autograd import Variable
+import torch
+
+import argparse
+import visdom
+from datetime import datetime
+
+vis = visdom.Visdom()
+EXP_NAME = "exp-{}".format(datetime.now())
+
+config = {
+    'user': 'root',
+    'password': 'vela1990',
+    'host': '127.0.0.1',
+    'database': 'ml_crif',
+}
 
 
+def __pars_args__():
+    parser = argparse.ArgumentParser(description='Simple GRU')
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "customers"),
+                        help="Directory containing dataset file")
+    parser.add_argument("--customer_file_name", "-c_fn", type=str, default="customers_formatted_attribute_risk.bin",
+                        help="Customer attirbute file name")
+    parser.add_argument("--neighbors_file_name", "-n_fn", type=str, default="customeridx_to_neighborsidx.bin",
+                        help="Customer attirbute file name")
+    parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_customers_formatted_attribute_risk.bin",
+                        help="File name")
+    parser.add_argument("--eval_file_name", "-eval_fn", type=str,
+                        default="eval_customers_formatted_attribute_risk.bin",
+                        help="File name")
+
+    parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
+
+    parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
+    parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
+    parser.add_argument('--embedding_dim', type=int, default=24, help='Embedding size.')
+    parser.add_argument('--feature_size', type=int, default=184, help='Feature size.')
+    parser.add_argument('--memory_size', type=list, default=[512, 256], help='Hidden state memory size.')
+    parser.add_argument('--output_size', type=int, default=1, help='output size.')
+    parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
+
+    parser.add_argument('-lr', '--learning_rate', type=float, default=0.001, help='learning rate (default: 0.001)')
+    parser.add_argument('--epsilon', type=float, default=0.1, help='Epsilon value for Adam Optimizer.')
+    parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
+    parser.add_argument('--n_iter', type=int, default=131, help="Iteration number.")
+
+    parser.add_argument('--train', default=True, help='if we want to update the master weights')
+    return parser.parse_args()
 
 
+if __name__ == "__main__":
+    args = __pars_args__()
+    risk_tsfm = RiskToTensor(args.data_dir)
+    attribute_tsfm = AttributeToTensor(args.data_dir)
+    input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir,
+                                                                                       args.customer_file_name,
+                                                                                       args.neighbors_file_name,
+                                                                                       args.embedding_dim,
+                                                                                       risk_tsfm, attribute_tsfm)
 
-class Net(nn.Module):
-    """Container module with an encoder, a recurrent module, and a decoder."""
+    model = SimpleGRU(args.embedding_dim, args.memory_size, 1, args.output_size, args.batch_size,
+                      dropout=args.drop_prob)
 
-    def __init__(self, input_size, hidden_size, n_layers, output_size, dropout=0.5):
-        super(Net, self).__init__()
-        self.rnn = nn.GRU(input_size, hidden_size, n_layers,
-                          batch_first=True,
-                          dropout=dropout)
+    # train_dataset = TestDataset(10)
+    # eval_dataset = TestDataset(10)
 
+    train_dataset = CustomerDataset(args.data_dir, args.train_file_name)
+    eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
 
-        self.dense = nn.Sequential(nn.Linear(hidden_size, output_size),
-                                   nn.ELU())
-        self.drop = nn.Dropout(dropout)
-        self.softmax = nn.LogSoftmax(dim=2)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
+                                  drop_last=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=True, num_workers=4,
+                                 drop_last=True)
 
+    if args.use_cuda:
+        model.cuda()
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.nlayers = n_layers
+    eval_number = 0
+    total_loss = torch.FloatTensor()
+    eval_loss = torch.FloatTensor()
+    for i_iter in range(args.n_iter):
+        iter_loss = 0
+        model.train()
+        hidden = model.init_hidden(args.batch_size)
+        # TRAIN
+        for b_idx, b_index in enumerate(train_dataloader):
+            b_input_sequence = Variable(input_embeddings[b_index])
+            b_target_sequence = Variable(target_embeddings[b_index])
+            hidden = model.repackage_hidden_state(hidden)
 
-        self.reset_parameters()
+            if args.use_cuda:
+                b_input_sequence = b_input_sequence.cuda()
+                b_target_sequence = b_target_sequence.cuda()
+                hidden = hidden.cuda()
 
-        self.criterion = nn.NLLLoss()
+            optimizer.zero_grad()
+            predict, hidden = model.forward(b_input_sequence, hidden)
+            loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
 
+            loss.backward()
+            torch.nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
+            optimizer.step()
 
+            iter_loss += loss
 
-    def reset_parameters(self):
-        for p in self.parameters():
-            if len(p.data.shape) >= 2:
-                nn.init.xavier_uniform(p)
+        iter_loss /= (b_idx + 1)
 
-    def forward(self, input, hidden):
-        packed_output, hidden = self.rnn(input, hidden)
-        output, seq_length = pad_packed_sequence(packed_output, batch_first=True)
+        if args.use_cuda:
+            total_loss = torch.cat((total_loss, iter_loss.data.cpu()))
+        else:
+            total_loss = torch.cat((total_loss, iter_loss.data))
 
-        # select last output (wrong in this case)
-        # row_indices = torch.arange(0, batch_size).long()
-        # seq_length = torch.LongTensor(seq_length) - 1
-        # output = output[row_indices, seq_length, :]
+        print(iter_loss.data)
 
-        output = self.dense(output)
-        output = self.drop(output)
-        return self.softmax(output)
+        # plot loss
+        vis.line(
+            Y=total_loss,
+            X=torch.LongTensor(range(i_iter + 1)),
+            opts=dict(legend=["loss"],
+                      title="Simple GRU training loss {}".format(EXP_NAME),
+                      showlegend=True),
+            win="win:train-{}".format(EXP_NAME))
 
-    def init_hidden(self, batch_size):
-        return Variable(torch.zeros(self.nlayers, batch_size, self.hidden_size))
+        # EVAL
+        if i_iter % 10 == 0 and i_iter > 0:
+            eval_number += 1
+            performance = 0
 
-    def compute_loss(self, b_predict, b_target):
-        return self.criterion(b_predict, b_target)
+            model.eval()
+            hidden = model.init_hidden(args.eval_batch_size)
+            for b_idx, b_index in enumerate(eval_dataloader):
+                b_input_sequence = Variable(input_embeddings[b_index])
+                b_target_sequence = Variable(target_embeddings[b_index])
+                hidden = model.repackage_hidden_state(hidden)
 
+                if args.use_cuda:
+                    b_input_sequence = b_input_sequence.cuda()
+                    b_target_sequence = b_target_sequence.cuda()
+                    hidden = hidden.cuda()
 
-name_dataset = NameDataset(path_join("..", "data", "language", "names", "*.txt"))
+                predict, hidden = model.forward(b_input_sequence, hidden)
 
+                performance += model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
 
-input_size = name_dataset.n_letters + name_dataset.n_categories
-output_size = name_dataset.n_letters
-batch_size = 60
-n_layers = 1
-hidden_size = 128
+            performance /= (b_idx + 1)
 
-dataloader = DataLoader(name_dataset, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True)
+            if args.use_cuda:
+                eval_loss = torch.cat((eval_loss, performance.data.cpu()))
+            else:
+                eval_loss = torch.cat((eval_loss, performance.data))
 
-model = Net(input_size, hidden_size, n_layers, output_size, dropout=0.1)
-model.train()
-
-n_iters = 100000
-print_every = 5000
-plot_every = 500
-all_losses = []
-total_loss = 0 # Reset every plot_every iters
-
-
-learning_rate = 0.0025
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-
-def traing(b_input_sequence, b_target_sequence, b_seq_length):
-    hidden = model.init_hidden(batch_size)
-
-    b_seq_length, perm_idx = b_seq_length.sort(0, descending=True)
-    b_input_sequence = b_input_sequence[perm_idx]
-    b_target_sequence = b_target_sequence[perm_idx]
-    b_target_sequence = Variable(b_target_sequence[:, :b_seq_length[0]].contiguous())
-
-    pack = pack_padded_sequence(Variable(b_input_sequence), b_seq_length.numpy(), batch_first=True)
-
-    optimizer.zero_grad()
-    loss = 0
-
-    predict = model(pack, hidden)
-    predict = predict.view(-1, name_dataset.n_letters)
-    loss += model.compute_loss(predict, b_target_sequence.view(-1))
-
-    loss.backward()
-    optimizer.step()
-
-    return predict, loss
-
-
-
-
-for iter in range(1, n_iters + 1):
-    for i_batch, batch in enumerate(dataloader):
-
-        output, loss = traing(batch['input_sequence'], batch['target_sequence'], batch['seq_length'])
-        total_loss += loss
-
-    print(total_loss)
-    total_loss = 0
-
-    # if iter % print_every == 0:
-    #     print('%s (%d %d%%) %.4f' % (timeSince(start), iter, iter / n_iters * 100, loss))
-
-    # if iter % plot_every == 0:
-    #     all_losses.append(total_loss / plot_every)
+            vis.line(
+                Y=eval_loss,
+                X=torch.LongTensor(range(eval_number)),
+                opts=dict(legend=["MSE", ],
+                          title="Simple GRU eval error",
+                          showlegend=True),
+                win="win:eval-{}".format(EXP_NAME))
 

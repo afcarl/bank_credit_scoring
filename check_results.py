@@ -16,7 +16,7 @@ import pickle
 
 BASE_DIR = "./data"
 DATASET = "sintetic"
-MODEL = "RNN_StructuredGuidedAttention"
+MODEL = "RNN_GuidedSelfAttention"
 
 
 
@@ -84,8 +84,8 @@ def plot_heatmap(data, weights, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_38.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
     for example_id, example in examples.items():
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        plot_heatmap(example["neighbors"], example["weights"], id=example_id)
+        print("input:{}\nneighbors:{}".format(example["input"].t(), example["neighbors"]))
+        plot_heatmap(example["neighbors"], example["weights"].data.sum(0).view(4,10), id=example_id)

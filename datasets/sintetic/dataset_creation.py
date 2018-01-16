@@ -7,18 +7,20 @@ from os import path
 
 BASE_DIR = path.join("..", "..", "data", "sintetic")
 
-def generate_embedding(dim, num_neighbors):
-    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).normal_(5, 4).int().float()
+def generate_embedding(dim, num_neighbors, offset_sampler= torch.distributions.Categorical(torch.Tensor([ 0.25, 0.25, 0.25, 0.25 ]))):
+    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).normal_(3, 4).int().float()
     input_embeddings = torch.clamp(input_embeddings, 0, 10)
+    input_embeddings, _ = torch.sort(input_embeddings, 1)
     neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
-    target_embeddings = torch.FloatTensor(dim[0]).zero_()
+    target_embeddings = torch.FloatTensor(dim[0], dim[1]).zero_()
 
-    neighbors = {}
     for idx in range(input_embeddings.size(0)):
-        neighbors[idx] = random.sample(range(input_embeddings.size(0)), num_neighbors)
-        n_embedding = torch.stack([input_embeddings[n_idx] for n_idx in neighbors[idx]], dim=0)
+        n_embedding = torch.FloatTensor(num_neighbors, dim[1], 1).zero_()
+        n_embedding[0] = input_embeddings[idx]
+        n_embedding[-1] = torch.FloatTensor(dim[1], 1).uniform_(0, 10).int().float()
+        n_embedding[1:-1] = input_embeddings[idx].repeat(2, 1, 1) + offset_sampler.sample(sample_shape=(2, 1, 1)).float()
         neighbor_embeddings[idx] = n_embedding
-        target_embeddings[idx] = torch.mean(torch.cat((input_embeddings[idx, -1], n_embedding[:, -1].squeeze()), dim=0))
+        target_embeddings[idx] = torch.mean(torch.cat((input_embeddings[idx].unsqueeze(0), n_embedding[:-1]), dim=0), dim=0)
         # if input_embeddings[idx, -1, 0] >= 5:
         #     target_embeddings[idx] = torch.mean(n_embedding[int(num_neighbors/2):, -1])
         # else:
@@ -50,7 +52,7 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings = generate_embedding((12000, 10), 4)
+    input_embeddings, target_embeddings, neighbor_embeddings = generate_embedding((10000, 10), 4)
 
     pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, "simple_input_embeddings.bin")), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, "simple_target_embeddings.bin"), "wb"))

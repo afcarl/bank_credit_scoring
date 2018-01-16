@@ -118,9 +118,8 @@ class GuidedSelfAttention(nn.Module):
         A = nn.functional.softmax(S, dim=-1)
 
         A = self.dropout(A)
-        W = A.data.sum(1).view(self.batch_size, self.max_neighbors, self.n_timestemp)
         output = torch.bmm(A, flat_neigh_rnn_output)
-        return output, W
+        return output, A
 
 
 class SimpleStructuredNeighborAttentionRNN(nn.Module):
@@ -130,7 +129,10 @@ class SimpleStructuredNeighborAttentionRNN(nn.Module):
         self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
         self.Attention = GuidedSelfAttention(hidden_dim, max_neighbors, n_timestemps, dropout_prob)
 
-        self.MLP_projection = nn.Sequential(nn.Conv2d(1, 1, kernel_size=((max_neighbors+1) * n_timestemps, hidden_dim), stride=1),
+        # self.MLP_projection = nn.Sequential(nn.Conv2d(1, 1, kernel_size=((max_neighbors+1) * n_timestemps, hidden_dim), stride=1),
+        #                                     nn.ReLU())
+
+        self.MLP_projection = nn.Sequential(nn.Conv2d(max_neighbors + 1, 1, kernel_size=(1, hidden_dim), stride=1),
                                             nn.ReLU())
         self.name = "RNN_" + self.Attention.name
 
@@ -186,8 +188,11 @@ class SimpleStructuredNeighborAttentionRNN(nn.Module):
         applied_attention, weights = self.Attention(node_output, neighbors_output, s_len)
 
 
+        # output = self.MLP_projection(
+        #     torch.cat((node_output, applied_attention), dim=1).unsqueeze(1))
+
         output = self.MLP_projection(
-            torch.cat((node_output, applied_attention), dim=1).unsqueeze(1))
+            torch.cat((node_output.unsqueeze(1), neighbors_output.view(self.batch_size, self.max_neighbors, self.n_timestemp, self.hidden_dim)), dim=1))
 
         # output = self.MLP_projection(torch.cat((node_output, neighbors_output.view(self.batch_size, -1, self.hidden_dim)), dim=1).unsqueeze(1))
         output = output.squeeze()
@@ -209,10 +214,10 @@ class SimpleStructuredNeighborAttentionRNN(nn.Module):
         else:
             return tuple(self.repackage_hidden_state(v) for v in h)
 
+    def compute_loss(self, predict, target):
+        return self.criterion(predict, target)
+
     def compute_error(self, predict, target):
-        if self.training:
-            return self.criterion(predict, target)
-        else:
-            return rmse(predict, target)
+        return rmse(predict, target)
 
 

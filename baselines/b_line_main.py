@@ -3,7 +3,7 @@ from datasets.sintetic.utils import get_sintetic_embeddings
 
 from os.path import join as path_join
 from torch.utils.data import DataLoader
-from models import SimpleStructuredNeighborAttentionRNN
+from baselines.models import SimpleConcatRNN
 import torch.optim as optim
 from torch.autograd import Variable
 import torch
@@ -28,11 +28,11 @@ config = {
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "sintetic"), help="Directory containing dataset file")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="simple_train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="simple_eval_dataset.bin", help="Eval file name")
 
-    parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
+    parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
     parser.add_argument('--batch_size', type=int, default=20, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
 
@@ -82,11 +82,10 @@ def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddi
             node_hidden = node_hidden.cuda()
             neighbor_hidden = neighbor_hidden.cuda()
 
-        predict, node_hidden, neighbor_hidden, weights = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
+        predict, node_hidden, neighbor_hidden = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
                                                                   b_seq_len)
         performance += model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
         if random.random() > save_rate:
-            weights = weights.data.cpu()
             b_input_sequence = b_input_sequence.data.cpu()
             b_target_sequence = b_target_sequence.data.cpu()
             b_neighbors_sequence = b_neighbors_sequence.data.cpu()
@@ -95,7 +94,6 @@ def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddi
                 half = "upper" if b_input_sequence[row, -1, 0] >= 5 else "lower"
                 saved_weights[idx] = dict(
                     id=idx,
-                    weights=weights[row],
                     input=b_input_sequence[row].t(),
                     half=half,
                     target=b_target_sequence[row],
@@ -133,7 +131,7 @@ def train(model, optimizer, dataloader, input_embeddings, target_embeddings,neig
 
         optimizer.zero_grad()
 
-        predict, node_hidden, neighbor_hidden, weights = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
+        predict, node_hidden, neighbor_hidden = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
                                                                       b_seq_len)
         loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
 
@@ -162,7 +160,7 @@ if __name__ == "__main__":
 
 
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_sintetic_embeddings(args.data_dir, prefix="simple_")
-    model = SimpleStructuredNeighborAttentionRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
+    model = SimpleConcatRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
                                                  args.max_neighbors, input_embeddings.size(1),
                                                  dropout_prob=args.drop_prob)
 
