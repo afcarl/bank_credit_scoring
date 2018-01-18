@@ -31,7 +31,7 @@ T_risk = namedtuple("T_risk", RISK_ATTRIBUTE)
 T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
 CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
 PackedNeighbor = namedtuple('PackedNeighbor', ['neighbors', 'seq_len'])
-
+PackedWeight = namedtuple('PackedWeight', ['net_weight', 'time_weight'])
 def mse(input, target):
     return torch.mean((input - target) ** 2)
 

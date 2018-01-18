@@ -16,7 +16,7 @@ import pickle
 
 BASE_DIR = "./data"
 DATASET = "sintetic"
-MODEL = "RNN_NetSelfAttention"
+MODEL = "RNN_NetAttention_TimeAttention"
 
 
 
@@ -37,10 +37,14 @@ def _axisformat(x, opts):
             'showticklabels': opts.get(x + 'ytick'),
         }
 
-def plot_heatmap(data, weights, id=0, colorscale="Viridis"):
+def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
     weights_norm = weights.div(weights.max(dim=1)[0].unsqueeze(1))
-    z_mins = weights_norm.min(dim=1)[0]
-    z_maxs = weights_norm.max(dim=1)[0]
+    if weights.size(1) == 4:
+        weights_norm = weights_norm.t()
+        rowname = ["neighbor {}".format(i) for i in range(1, 5)]
+    else:
+        rowname = ["node"]
+        rowname.extend(["neighbor {}".format(i) for i in range(1, 5)])
 
     # traces = [dict(
     #         z=[weights_norm[row, :].numpy().tolist()],
@@ -71,21 +75,22 @@ def plot_heatmap(data, weights, id=0, colorscale="Viridis"):
     #     'win': "win:check-{}".format(EXP_NAME),
     # })
     return vis.heatmap(
-        X=weights_norm.t(),
+        X=weights_norm,
         opts=dict(
-            title=MODEL,
-            columnnames=list(map(str, range(0, 1))),
-            rownames=['neighbor 1', 'neighbor 2', 'neighbor 3', 'neighbor 4'],
+            title=title,
+            columnnames=list(map(str, range(weights.size(0)))),
+            rownames=rowname,
             colormap=colorscale,
             marginleft=80
         ),
-        win="win:check-{}-id{}".format(EXP_NAME,id)
+        win="win:check-{}-id{}-{}".format(EXP_NAME,id,title)
     )
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_2.bin"), "rb"))
     for example_id, example in examples.items():
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
         print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        plot_heatmap(example["neighbors"], example["weights"].sum(1), id=example_id)
+        plot_heatmap(example["weights"].net_weight.sum(1), "net_weight", id=example_id)
+        plot_heatmap(example["weights"].time_weight.sum(1), "time_weight", id=example_id)

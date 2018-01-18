@@ -49,7 +49,7 @@ def generate_sinusoidal_embedding(dim, num_neighbors, offset_sampler= torch.dist
         neighbor_embeddings[idx] = n_embedding
         target_embeddings[idx] = torch.mean(n_embedding[:, input_embeddings[idx]][:-1], dim=0)
 
-    return input_embeddings.float(), target_embeddings, neighbor_embeddings
+    return input_embeddings.float().unsqueeze(-1), target_embeddings, neighbor_embeddings
 
 def split_training_test_dataset(_ids, e_t_size=25000):
     """

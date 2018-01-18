@@ -87,7 +87,6 @@ def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddi
                                                                   b_seq_len)
         performance += model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
         if random.random() > save_rate:
-            weights = weights.data.cpu()
             b_input_sequence = b_input_sequence.data.cpu()
             b_target_sequence = b_target_sequence.data.cpu()
             b_neighbors_sequence = b_neighbors_sequence.data.cpu()

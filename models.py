@@ -5,6 +5,8 @@ import pickle
 from os.path import join as path_join
 from torch.autograd import Variable
 import torch.nn as nn
+from helper import PackedWeight
+
 
 class Bottle(nn.Module):
     ''' Perform the reshape routine before and after an operation '''
@@ -189,7 +191,8 @@ class NetAttention(nn.Module):
         A = self.dropout(A)
         output = torch.bmm(A, flat_neigh_rnn_output)
 
-        return output.view(self.batch_size, self.max_neighbors, self.n_timestemp, self.hidden_dim), torch.stack(torch.split(A, self.batch_size, dim=0), dim=1)
+        return output.view(self.batch_size, self.max_neighbors, self.n_timestemp, self.hidden_dim), \
+               torch.stack(torch.split(A, self.batch_size, dim=0), dim=1)
 
 class TimeAttention(nn.Module):
     def __init__(self, n_head, hidden_dim, max_neighbors, n_timestemp, drop_prob=0.1):
@@ -198,7 +201,7 @@ class TimeAttention(nn.Module):
 
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(drop_prob)
-        self.proj = NodeNeighborProjection(hidden_dim, max_neighbors)
+        self.proj = NodeNeighborProjection(hidden_dim, hidden_dim)
 
         self.n_head = n_head
         self.hidden_dim = hidden_dim
@@ -216,23 +219,18 @@ class TimeAttention(nn.Module):
     def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number):
         self.batch_size = node_rnn_output.size(0)
 
-        stacked_node_rnn_output = node_rnn_output.repeat(self.max_neighbors, 1, 1)  # (n_head*b_size*#_neighbor+1, time, hiddendim)
-        flat_neigh_rnn_output = neigh_rnn_output.view(-1, self.n_timestemp,
-                                                      self.hidden_dim)  # (n_head*b_size*#_neighbor+1, time, hiddendim)
+        stacked_node_rnn_output = node_rnn_output.repeat(self.max_neighbors+1, 1, 1)  # (n_head*b_size*#_neighbor+1, time, hiddendim)
+        flat_neigh_rnn_output = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1).view(-1, self.n_timestemp, self.hidden_dim)  # (n_head*b_size*#_neighbor+1, time, hiddendim)
 
         S = self.proj(stacked_node_rnn_output, flat_neigh_rnn_output)
         S = S.div(neighbors_number.sum() ** 0.5)
         A = self.softmax(S)
         A = self.dropout(A)
         output = torch.bmm(A, flat_neigh_rnn_output)
-
-        output = torch.cat(torch.split(output, self.batch_size, dim=0), dim=-1)
-
-        # project back to residual size
-        output = self.proj(output)
         output = self.dropout(output)
 
-        return output, torch.stack(torch.split(A, self.batch_size, dim=0), dim=1)
+        return torch.stack(torch.split(output, self.batch_size, dim=0), dim=1),\
+               torch.stack(torch.split(A, self.batch_size, dim=0), dim=1)
 
 
 class SimpleStructuredNeighborAttentionRNN(nn.Module):
@@ -304,10 +302,10 @@ class SimpleStructuredNeighborAttentionRNN(nn.Module):
 
         net_attention, net_weights = self.NetAttention(node_output, neighbors_output, s_len)
         time_attention, time_weights = self.TimeAttention(node_output, net_attention, s_len)
-        output = torch.cat((node_output.unsqueeze(1), time_attention), dim=1)
+        # output = torch.cat((node_output.unsqueeze(1), time_attention), dim=1)
 
         # output = self.MLP_projection(output.view(-1, 1, self.n_timestemp, self.hidden_dim))
-        output = torch.sum(output, dim=1)
+        output = torch.sum(time_attention[:, 1:], dim=1)
         # output = self.prj(output)
 
         # output = self.MLP_projection(
@@ -319,7 +317,7 @@ class SimpleStructuredNeighborAttentionRNN(nn.Module):
         # output = self.MLP_projection(torch.cat((node_output, neighbors_output.view(self.batch_size, -1, self.hidden_dim)), dim=1).unsqueeze(1))
 
         output = output.squeeze()
-        return output, node_hidden, neighbors_hidden, weights
+        return output, node_hidden, neighbors_hidden, [PackedWeight(net_weights[i].data.cpu(), time_weights[i].data.cpu()) for i in range(self.batch_size)]
 
 
     def init_hidden(self, batch_size):
