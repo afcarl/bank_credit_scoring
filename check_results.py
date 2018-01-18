@@ -16,7 +16,7 @@ import pickle
 
 BASE_DIR = "./data"
 DATASET = "sintetic"
-MODEL = "RNN_GuidedSelfAttention"
+MODEL = "RNN_NetSelfAttention"
 
 
 
@@ -71,10 +71,10 @@ def plot_heatmap(data, weights, id=0, colorscale="Viridis"):
     #     'win': "win:check-{}".format(EXP_NAME),
     # })
     return vis.heatmap(
-        X=weights_norm,
+        X=weights_norm.t(),
         opts=dict(
             title=MODEL,
-            columnnames=list(map(str, range(0, 10))),
+            columnnames=list(map(str, range(0, 1))),
             rownames=['neighbor 1', 'neighbor 2', 'neighbor 3', 'neighbor 4'],
             colormap=colorscale,
             marginleft=80
@@ -87,5 +87,5 @@ if __name__ == "__main__":
     examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
     for example_id, example in examples.items():
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("input:{}\nneighbors:{}".format(example["input"].t(), example["neighbors"]))
-        plot_heatmap(example["neighbors"], example["weights"].data.sum(0).view(4,10), id=example_id)
+        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
+        plot_heatmap(example["neighbors"], example["weights"].sum(1), id=example_id)

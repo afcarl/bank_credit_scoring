@@ -96,15 +96,12 @@ class SimpleConcatRNN(nn.Module):
         self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
         # self.MLP_projection = nn.Sequential(nn.Conv2d(1, 1, kernel_size=((max_neighbors+1) * n_timestemps, hidden_dim), stride=1),
         #                                     nn.ReLU())
-        self.MLP_projection = nn.Sequential(nn.Conv2d(max_neighbors+1, 1, kernel_size=(1, hidden_dim), stride=1),
+        self.MLP_projection = nn.Sequential(nn.Conv2d(1, 1, kernel_size=(1, hidden_dim), stride=1),
                                              nn.ReLU())
         self.name = "RNN_Concat"
-
-        # self.MLP_projection = nn.Sequential(nn.Conv2d(1, 1, kernel_size=(50, hidden_dim), stride=1),
-        #                                                                         nn.ReLU())
         # self.name = "RNN_concat"
         self.dropout = nn.Dropout(dropout_prob)
-
+        self.prj = nn.Linear(hidden_dim, output_dim)
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -123,7 +120,7 @@ class SimpleConcatRNN(nn.Module):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                nn.init.xavier_uniform(p.data)
+                nn.init.xavier_normal(p.data)
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
         """
@@ -147,15 +144,8 @@ class SimpleConcatRNN(nn.Module):
         neighbors_input = neighbors_input.view(-1, self.n_timestemp, self.input_dim)              # reduce batch dim
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
         neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
-        neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.n_timestemp, self.hidden_dim) # reshape to normal dim
-
-
-
-        output = self.MLP_projection(
-            torch.cat((node_output.unsqueeze(1), neighbors_output), dim=1))
-
-        # output = self.MLP_projection(torch.cat((node_output, neighbors_output.view(self.batch_size, -1, self.hidden_dim)), dim=1).unsqueeze(1))
-        output = output.squeeze()
+        output = torch.cat((node_output.unsqueeze(1), neighbors_output.view(self.batch_size, self.max_neighbors, self.n_timestemp, -1)), dim=1)
+        output = torch.sum(output.view(self.batch_size, self.max_neighbors+1, -1), dim=1)
         return output, node_hidden, neighbors_hidden
 
 

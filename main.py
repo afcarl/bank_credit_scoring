@@ -29,18 +29,19 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--train_file_name", "-train_fn", type=str, default="simple_train_dataset.bin", help="Train file name")
-    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="simple_eval_dataset.bin", help="Eval file name")
+    parser.add_argument("--dataset_prefix", type=str, default="sin_", help="Prefix for the dataset")
+    parser.add_argument("--train_file_name", "-train_fn", type=str, default="sin_train_dataset.bin", help="Train file name")
+    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="sin_eval_dataset.bin", help="Eval file name")
 
-    parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
+    parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
     parser.add_argument('--batch_size', type=int, default=20, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
 
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
+    parser.add_argument('--hidden_size', type=int, default=1, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
     parser.add_argument('--attention_dim', type=int, default=100, help='Attention dim.')
-    parser.add_argument('--attention_hops', type=int, default=30, help='Attention hops.')
+    parser.add_argument('--attention_heads', type=int, default=2, help='Attention heads.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
@@ -134,7 +135,7 @@ def train(model, optimizer, dataloader, input_embeddings, target_embeddings,neig
         optimizer.zero_grad()
 
         predict, node_hidden, neighbor_hidden, weights = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
-                                                                      b_seq_len)
+                                                                       b_seq_len)
         loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
 
         loss.backward()
@@ -161,9 +162,9 @@ if __name__ == "__main__":
     #     torch.cuda.manual_seed(10)
 
 
-    input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_sintetic_embeddings(args.data_dir, prefix="simple_")
+    input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_sintetic_embeddings(args.data_dir, prefix=args.dataset_prefix)
     model = SimpleStructuredNeighborAttentionRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
-                                                 args.max_neighbors, input_embeddings.size(1),
+                                                 args.max_neighbors, input_embeddings.size(1), args.attention_heads,
                                                  dropout_prob=args.drop_prob)
 
     train_dataset = CustomerDataset(args.data_dir,  args.train_file_name)

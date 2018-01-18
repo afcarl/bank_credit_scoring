@@ -37,7 +37,7 @@ def __pars_args__():
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
 
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
+    parser.add_argument('--hidden_size', type=int, default=1, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
     parser.add_argument('--attention_dim', type=int, default=100, help='Attention dim.')
     parser.add_argument('--attention_hops', type=int, default=30, help='Attention hops.')
@@ -222,5 +222,6 @@ if __name__ == "__main__":
                           title=model.name + " eval loos",
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
-
+            print("dump example")
             pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
+            print("dump done")
