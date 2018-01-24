@@ -29,15 +29,16 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--train_file_name", "-train_fn", type=str, default="simple_train_dataset.bin", help="Train file name")
-    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="simple_eval_dataset.bin", help="Eval file name")
+    parser.add_argument("--dataset_prefix", type=str, default="ts_", help="Prefix for the dataset")
+    parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
+    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
 
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
     parser.add_argument('--batch_size', type=int, default=20, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
 
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=1, help='Hidden state memory size.')
+    parser.add_argument('--hidden_size', type=int, default=4, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
     parser.add_argument('--attention_dim', type=int, default=100, help='Attention dim.')
     parser.add_argument('--attention_hops', type=int, default=30, help='Attention hops.')
@@ -159,13 +160,13 @@ if __name__ == "__main__":
     #     torch.cuda.manual_seed(10)
 
 
-    input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_sintetic_embeddings(args.data_dir, prefix="simple_")
+    input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_sintetic_embeddings(args.data_dir, prefix=args.dataset_prefix)
     model = SimpleConcatRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
                                                  args.max_neighbors, input_embeddings.size(1),
                                                  dropout_prob=args.drop_prob)
 
-    train_dataset = CustomerDataset(args.data_dir,  args.train_file_name)
-    eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
+    train_dataset = CustomerDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
+    eval_dataset = CustomerDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
 
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
@@ -204,7 +205,7 @@ if __name__ == "__main__":
             opts=dict(
                     # legend=["loss", "penal", "only_loss"],
                     legend=["loss"],
-                    title=model.name + " training loos",
+                    title=model.name + " training loos " + args.dataset_prefix,
                     showlegend=True),
             win="win:train-{}".format(EXP_NAME))
 
@@ -219,7 +220,7 @@ if __name__ == "__main__":
                 Y=eval_loss,
                 X=torch.LongTensor(range(0, i_iter + 1, args.eval_step)),
                 opts=dict(legend=["RMSE"],
-                          title=model.name + " eval loos",
+                          title=model.name + " eval loos " + args.dataset_prefix,
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
             print("dump example")

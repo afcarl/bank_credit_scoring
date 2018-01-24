@@ -3,7 +3,7 @@ from datasets.sintetic.utils import get_sintetic_embeddings
 
 from os.path import join as path_join
 from torch.utils.data import DataLoader
-from models import SimpleStructuredNeighborAttentionRNN
+from models import TestNetAttention, TestTimeAttention, JointSelfAttentionRNN
 import torch.optim as optim
 from torch.autograd import Variable
 import torch
@@ -29,18 +29,17 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="sin_", help="Prefix for the dataset")
-    parser.add_argument("--train_file_name", "-train_fn", type=str, default="sin_train_dataset.bin", help="Train file name")
-    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="sin_eval_dataset.bin", help="Eval file name")
+    parser.add_argument("--dataset_prefix", type=str, default="test_", help="Prefix for the dataset")
+    parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
+    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
 
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
     parser.add_argument('--batch_size', type=int, default=20, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=10, help='Batch size for eval.')
 
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=1, help='Hidden state memory size.')
+    parser.add_argument('--hidden_size', type=int, default=2, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
-    parser.add_argument('--attention_dim', type=int, default=100, help='Attention dim.')
     parser.add_argument('--attention_heads', type=int, default=2, help='Attention heads.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
@@ -162,12 +161,12 @@ if __name__ == "__main__":
 
 
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_sintetic_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = SimpleStructuredNeighborAttentionRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
-                                                 args.max_neighbors, input_embeddings.size(1), args.attention_heads,
-                                                 dropout_prob=args.drop_prob)
+    model = JointSelfAttentionRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
+                                  args.max_neighbors, input_embeddings.size(1), args.attention_heads,
+                                  dropout_prob=args.drop_prob)
 
-    train_dataset = CustomerDataset(args.data_dir,  args.train_file_name)
-    eval_dataset = CustomerDataset(args.data_dir, args.eval_file_name)
+    train_dataset = CustomerDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
+    eval_dataset = CustomerDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
 
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,

@@ -1,27 +1,22 @@
-from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor, ensure_dir
-from datasets.sintetic.utils import get_sintetic_embeddings
-
 from os.path import join as path_join
-from torch.utils.data import DataLoader
-from models import SimpleStructuredNeighborAttentionRNN
-import torch.optim as optim
-from torch.autograd import Variable
-import torch
-import random
-
-import argparse
 import visdom
-from datetime import datetime
+import datetime
 import pickle
+import plotly.graph_objs as go
+import torch
+import collections
+import plotly.plotly as py
+import plotly.tools as tls
+import copy
 
 BASE_DIR = "./data"
 DATASET = "sintetic"
-MODEL = "RNN_NetAttention_TimeAttention"
+MODEL = "RNN_TimeAttention"
 
 
 
 vis = visdom.Visdom()
-EXP_NAME = "exp-{}".format(datetime.now())
+EXP_NAME = "exp-{}".format(datetime.datetime.now())
 
 def _axisformat(x, opts):
     fields = ['type', 'tick', 'label', 'tickvals', 'ticklabels', 'tickmin', 'tickmax', 'tickfont']
@@ -36,6 +31,105 @@ def _axisformat(x, opts):
             'tickwidth': opts.get(x + 'tickstep'),
             'showticklabels': opts.get(x + 'ytick'),
         }
+
+
+def __reformat_duplicates__(a):
+    counter = collections.Counter(a)
+
+    for item, count in counter.items():
+        if count > 1:
+            c = 0
+            for idx, val in enumerate(a):
+                if val == item:
+                    a[idx] = val + str(c)
+                    c += 1
+
+    return a
+
+
+def plot_time_attention(weights, data, title, id, colorscale="Viridis"):
+    # programmers = ['Alex', 'Nicole', 'Sara', 'Etienne', 'Chelsea', 'Jody', 'Marianne']
+    #
+    # base = datetime.datetime.today()
+    # date_list = [base - datetime.timedelta(days=x) for x in range(0, 180)]
+    #
+    # z = []
+    #
+    # for prgmr in programmers:
+    #     new_row = []
+    #     for date in date_list:
+    #         new_row.append(np.random.poisson())
+    #     z.append(list(new_row))
+    #
+    # data = [
+    #     go.Heatmap(
+    #         z=z,
+    #         x=date_list,
+    #         y=programmers,
+    #         colorscale='Viridis',
+    #     )
+    # ]
+
+
+
+    for net in range(weights.size(0)):
+        fn_y_name = lambda x: "Node Input" if x==0 else "Neighbor {}".format(x)
+        row_name = list(map(lambda x: str(x)[:3], data[0].numpy().tolist()))
+        row_val = __reformat_duplicates__(copy.copy(row_name))
+        col_name = list(map(lambda x: str(x)[:3], data[net].numpy().tolist()))
+        col_val = __reformat_duplicates__(copy.copy(col_name))
+        plot_data = [
+                go.Heatmap(
+                    z=weights[net].numpy().tolist(),
+                    x=row_val,
+                    y=col_val,
+                    colorscale=colorscale,
+                )
+            ]
+        layout = go.Layout(
+            title='{}-{}'.format(title, net),
+            xaxis=dict(
+                type="category",
+                tickmode="array",
+                tickvals=row_val,
+                ticktext=row_name,
+                autotick=False,
+                title='Node Input',
+                showticklabels=True,
+                tickangle=0,
+                showgrid=True,
+                mirror='ticks',
+            ),
+            yaxis=dict(
+                type="category",
+                tickmode="array",
+                tickvals=col_val,
+                ticktext=col_name,
+                autotick=False,
+                title=fn_y_name(net),
+                showticklabels=True,
+                tickangle=0,
+                showgrid=True,
+                mirror='ticks',
+            ),
+        )
+
+        fig = go.Figure(data=plot_data, layout=layout)
+        py.plot(fig, filename='{}-{}-{}'.format(id, title, net))
+
+        #
+        # vis.heatmap(
+        #     X=weights[net],
+        #     opts=dict(
+        #         title=title,
+        #         columnnames=col_name,
+        #         rownames=row_name,
+        #         colormap=colorscale,
+        #         marginleft=80
+        #     ),
+        #     win="win:check-{}-id{}-{}".format(EXP_NAME, net, title)
+        # )
+
 
 def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
     weights_norm = weights.div(weights.max(dim=1)[0].unsqueeze(1))
@@ -78,7 +172,7 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
         X=weights_norm,
         opts=dict(
             title=title,
-            columnnames=list(map(str, range(weights.size(0)))),
+            columnnames=list(map(str, range(weights_norm.size(1)))),
             rownames=rowname,
             colormap=colorscale,
             marginleft=80
@@ -88,9 +182,9 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_2.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
     for example_id, example in examples.items():
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
         print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        plot_heatmap(example["weights"].net_weight.sum(1), "net_weight", id=example_id)
-        plot_heatmap(example["weights"].time_weight.sum(1), "time_weight", id=example_id)
+        # plot_heatmap(example["weights"].sum(1), "net_weight", id=example_id)
+        plot_time_attention(example["weights"], torch.cat((example["input"], example["neighbors"]), dim=0), "time_weight", id=example_id)

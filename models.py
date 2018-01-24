@@ -1,5 +1,5 @@
 import torch
-from helper import rmse, TIMESTAMP
+from helper import rmse, TIMESTAMP, get_attn_mask
 from numpy import convolve
 import pickle
 from os.path import join as path_join
@@ -7,20 +7,43 @@ from torch.autograd import Variable
 import torch.nn as nn
 from helper import PackedWeight
 
+class BaseNet(nn.Module):
+    def __init__(self):
+        super(BaseNet, self).__init__()
+        self.criterion = nn.MSELoss()
 
-class Bottle(nn.Module):
-    ''' Perform the reshape routine before and after an operation '''
+    def reset_parameters(self):
+        """
+        reset the network parameters using xavier init
+        :return:
+        """
+        for p in self.parameters():
+            if len(p.data.shape) == 1:
+                p.data.fill_(0)
+            else:
+                nn.init.xavier_normal(p.data)
 
-    def forward(self, input):
-        if len(input.size()) <= 2:
-            return super(Bottle, self).forward(input)
-        size = input.size()[:2]
-        out = super(Bottle, self).forward(input.view(size[0]*size[1], -1))
-        return out.view(size[0], size[1], -1)
+    def init_hidden(self, batch_size):
+        """
+        generate a new hidden state to avoid the back-propagation to the beginning to the dataset
+        :return:
+        """
+        weight = next(self.parameters()).data
+        return Variable(weight.new(self.n_layers, batch_size, self.hidden_dim).zero_())
 
-class BottleSoftmax(Bottle, nn.Softmax):
-    ''' Perform the reshape routine before and after a softmax operation'''
-    pass
+    def repackage_hidden_state(self, h):
+        """Wraps hidden states in new Variables, to detach them from their history."""
+        if type(h) == Variable:
+            return Variable(h.data)
+        else:
+            return tuple(self.repackage_hidden_state(v) for v in h)
+
+    def compute_loss(self, predict, target):
+        return self.criterion(predict, target)
+
+    def compute_error(self, predict, target):
+        return rmse(predict, target)
+
 
 class LayerNormalization(nn.Module):
     ''' Layer normalization module '''
@@ -56,7 +79,7 @@ class StructuredGuidedAttention(nn.Module):
 
     def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number):
         self.batch_size = node_rnn_output.size(0)
-        self.n_timestemp = node_rnn_output.size(1)
+        self.time_steps = node_rnn_output.size(1)
         self.max_neighbors_number = neigh_rnn_output.size(1)
         self.use_cuda = next(self.parameters()).is_cuda
 
@@ -65,13 +88,13 @@ class StructuredGuidedAttention(nn.Module):
         neigh_rnn_output = neigh_rnn_output.view(self.batch_size, -1, self.hidden_dim)
 
         if self.use_cuda:
-            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, self.max_neighbors_number * self.n_timestemp).cuda())
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.n_timestemp).cuda()
+            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, self.max_neighbors_number * self.time_steps).cuda())
+            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps).cuda()
             penal = Variable(torch.zeros(1).cuda())
             I = Variable(torch.eye(self.attention_hops).cuda())
         else:
             BA = Variable(torch.zeros(self.batch_size, self.attention_hops, neigh_rnn_output.size(1)))
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.n_timestemp)
+            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps)
             penal = Variable(torch.zeros(1))
             I = Variable(torch.eye(self.attention_hops))
 
@@ -103,7 +126,7 @@ class GuidedAttention(nn.Module):
 
     def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number):
         self.batch_size = node_rnn_output.size(0)
-        self.n_timestemp  = node_rnn_output.size(1)
+        self.time_steps  = node_rnn_output.size(1)
         self.max_neighbors_number = neigh_rnn_output.size(1)
         self.use_cuda = next(self.parameters()).is_cuda
 
@@ -112,11 +135,11 @@ class GuidedAttention(nn.Module):
 
 
         if self.use_cuda:
-            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, self.max_neighbors_number * self.n_timestemp).cuda())
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.n_timestemp).cuda()
+            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, self.max_neighbors_number * self.time_steps).cuda())
+            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps).cuda()
         else:
             BA = Variable(torch.zeros(self.batch_size, self.attention_hops, neigh_rnn_output.size(1)))
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.n_timestemp)
+            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps)
 
         for i in range(self.batch_size):
             H = torch.mul(neigh_rnn_output[i], satcked_node_rnn_output[i])
@@ -158,18 +181,18 @@ class NodeNeighborProjection(nn.Module):
 
 
 class NetAttention(nn.Module):
-    def __init__(self, n_head, hidden_dim, max_neighbors, n_timestemp, drop_prob=0.1):
+    def __init__(self, n_head, hidden_dim, max_neighbors, time_steps, drop_prob=0.1):
         super(NetAttention, self).__init__()
         self.name = "_NetAttention"
 
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(drop_prob)
-        self.proj = NodeNeighborProjection(hidden_dim*n_timestemp, max_neighbors)
+        self.proj = NodeNeighborProjection(hidden_dim*time_steps, max_neighbors)
 
         self.n_head = n_head
         self.hidden_dim = hidden_dim
         self.max_neighbors = max_neighbors
-        self.n_timestemp = n_timestemp
+        self.time_steps = time_steps
 
         self.init_params()
 
@@ -191,22 +214,27 @@ class NetAttention(nn.Module):
         A = self.dropout(A)
         output = torch.bmm(A, flat_neigh_rnn_output)
 
-        return output.view(self.batch_size, self.max_neighbors, self.n_timestemp, self.hidden_dim), \
+        return output.view(self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim), \
                torch.stack(torch.split(A, self.batch_size, dim=0), dim=1)
 
 class TimeAttention(nn.Module):
-    def __init__(self, n_head, hidden_dim, max_neighbors, n_timestemp, drop_prob=0.1):
+    def __init__(self, n_head, hidden_dim, max_neighbors, time_steps, drop_prob=0.1):
         super(TimeAttention, self).__init__()
         self.name = "_TimeAttention"
 
+        # self.softmax = nn.Sequential(nn.Tanh(), nn.Softmax(dim=-1))
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(drop_prob)
-        self.proj = NodeNeighborProjection(hidden_dim, hidden_dim)
+
+        self.proj = NodeNeighborProjection(hidden_dim, time_steps)
+        self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
         self.n_head = n_head
         self.hidden_dim = hidden_dim
         self.max_neighbors = max_neighbors
-        self.n_timestemp = n_timestemp
+        self.time_steps = time_steps
         self.init_params()
 
     def init_params(self):
@@ -216,65 +244,109 @@ class TimeAttention(nn.Module):
             else:
                 nn.init.xavier_normal(p.data)
 
-    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number):
+    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number, attn_mask=None):
         self.batch_size = node_rnn_output.size(0)
-
-        stacked_node_rnn_output = node_rnn_output.repeat(self.max_neighbors+1, 1, 1)  # (n_head*b_size*#_neighbor+1, time, hiddendim)
-        flat_neigh_rnn_output = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1).view(-1, self.n_timestemp, self.hidden_dim)  # (n_head*b_size*#_neighbor+1, time, hiddendim)
-
-        S = self.proj(stacked_node_rnn_output, flat_neigh_rnn_output)
-        S = S.div(neighbors_number.sum() ** 0.5)
-        A = self.softmax(S)
-        A = self.dropout(A)
-        output = torch.bmm(A, flat_neigh_rnn_output)
-        output = self.dropout(output)
-
-        return torch.stack(torch.split(output, self.batch_size, dim=0), dim=1),\
-               torch.stack(torch.split(A, self.batch_size, dim=0), dim=1)
+        self.use_cuda = next(self.parameters()).is_cuda
 
 
-class SimpleStructuredNeighborAttentionRNN(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, n_timestemps, n_heads, dropout_prob=0.1):
-        super(SimpleStructuredNeighborAttentionRNN, self).__init__()
-        self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
-        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
-        self.NetAttention = NetAttention(n_heads, hidden_dim, max_neighbors, n_timestemps, dropout_prob)
-        self.TimeAttention = TimeAttention(n_heads, hidden_dim, max_neighbors, n_timestemps, dropout_prob)
+        querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
+        key_values = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1)
+        # querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors, -1, -1)
+        # key_values = neigh_rnn_output
+
+        outputs = Variable(torch.FloatTensor(self.batch_size, self.max_neighbors+1, self.time_steps, self.hidden_dim).zero_())
+        atts = torch.FloatTensor(self.batch_size, self.max_neighbors + 1, self.time_steps, self.time_steps).zero_()
+        # outputs = Variable(torch.FloatTensor(self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim).zero_())
+        # atts = torch.FloatTensor(self.batch_size, self.max_neighbors, self.time_steps, self.time_steps).zero_()
+
+        if self.use_cuda:
+            outputs = outputs.cuda()
+            atts = atts.cuda()
+
+        for i in range(self.max_neighbors+1):
+        # for i in range(self.max_neighbors):
+            query = self.proj_query(querys[:, i])
+            key = self.proj_key(key_values[:, i])
+            value = self.proj_value(key_values[:, i])
+
+            S = self.proj(query, key)
+            # S = key
+            if attn_mask is not None:
+                S.data.masked_fill_(attn_mask, -float('inf'))
+            A = self.softmax(S)
+            A = self.dropout(A)
+            output = torch.bmm(A, value)
+            outputs[:, i] = output
+            atts[:, i] = A.data
+        return outputs, atts
 
 
-        # self.MLP_projection = nn.Sequential(nn.Conv2d(1, 1, kernel_size=(1, hidden_dim), stride=1),
-        #                                      nn.ReLU())
+class JointAttention(nn.Module):
+    def __init__(self, n_head, hidden_dim, max_neighbors, time_steps, drop_prob=0.1):
+        super(JointAttention, self).__init__()
+        self.name = "_JointAttention"
 
+        # self.softmax = nn.Sequential(nn.Tanh(), nn.Softmax(dim=-1))
+        self.softmax = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(drop_prob)
 
-        # self.MLP_projection = nn.Sequential(nn.Conv2d(max_neighbors + 1, 1, kernel_size=(1, hidden_dim), stride=1),
-        #                                     nn.ReLU())
-        self.name = "RNN" + self.NetAttention.name + self.TimeAttention.name
-        # self.prj = nn.Linear(hidden_dim, output_dim)
-        # self.MLP_projection = nn.Sequential(nn.Conv2d(1, 1, kernel_size=(50, hidden_dim), stride=1),
-        #                                                                         nn.ReLU())
-        # self.name = "RNN_concat"
-        self.dropout = nn.Dropout(dropout_prob)
+        self.proj = NodeNeighborProjection(hidden_dim, time_steps * (max_neighbors+1))
+        self.proj_v = NodeNeighborProjection((max_neighbors + 1) * time_steps, hidden_dim)
+        self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=False)
 
-
-        self.input_dim = input_dim
+        self.n_head = n_head
         self.hidden_dim = hidden_dim
-        self.output_dim = output_dim
-        self.n_layers = nlayers
-        self.n_timestemp = n_timestemps
         self.max_neighbors = max_neighbors
-        self.n_heads = n_heads
-        self.criterion = nn.MSELoss()
+        self.time_steps = time_steps
+        self.init_params()
 
-    def reset_parameters(self):
-        """
-        reset the network parameters using xavier init
-        :return:
-        """
+    def init_params(self):
         for p in self.parameters():
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
                 nn.init.xavier_normal(p.data)
+
+    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number, attn_mask=None):
+        self.batch_size = node_rnn_output.size(0)
+        self.use_cuda = next(self.parameters()).is_cuda
+
+
+        querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
+        key_values = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1)
+
+
+        S = self.proj(querys.contiguous().view(self.batch_size, -1, self.hidden_dim), key_values.view(self.batch_size, -1, self.hidden_dim))
+        S = S.view(self.batch_size, -1, self.time_steps, self.time_steps)
+        if attn_mask is not None:
+            S.data.masked_fill_(attn_mask, -float('inf'))
+        A = self.softmax(S.view(self.batch_size, (self.max_neighbors+1)*self.time_steps, (self.max_neighbors+1)*self.time_steps))
+        output = self.proj_v(A, key_values.view(self.batch_size, -1, self.hidden_dim).transpose(1,2))
+        return output.veiw(self.batch_size, self.max_neighbors+1, self.time_steps, self.hidden_dim), \
+               A.view(self.batch_size, self.max_neighbors+1, self.time_steps, self.max_neighbors+1, self.time_steps)
+
+
+class TestNetAttention(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, n_heads, dropout_prob=0.1):
+        super(TestNetAttention, self).__init__()
+        self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.NetAttention = NetAttention(n_heads, hidden_dim, max_neighbors, time_steps, dropout_prob)
+
+        self.name = "RNN" + self.NetAttention.name
+        self.dropout = nn.Dropout(dropout_prob)
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.n_layers = nlayers
+        self.time_steps = time_steps
+        self.max_neighbors = max_neighbors
+        self.n_heads = n_heads
+
+        self.reset_parameters()
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
         """
@@ -293,52 +365,107 @@ class SimpleStructuredNeighborAttentionRNN(nn.Module):
         :return:
         """
         self.batch_size = node_input.size(0)
-        self.use_cuda = next(self.parameters()).is_cuda
 
-        neighbors_input = neighbors_input.view(-1, self.n_timestemp, self.input_dim)              # reduce batch dim
+        neighbors_input = neighbors_input.view(-1, self.time_steps, self.input_dim)  # reduce batch dim
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
         neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
-        neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.n_timestemp, self.hidden_dim) # reshape to normal dim
+        neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.time_steps,
+                                                              self.hidden_dim)  # reshape to normal dim
 
-        net_attention, net_weights = self.NetAttention(node_output, neighbors_output, s_len)
-        time_attention, time_weights = self.TimeAttention(node_output, net_attention, s_len)
-        # output = torch.cat((node_output.unsqueeze(1), time_attention), dim=1)
+        app_attention, weights = self.NetAttention(node_output, neighbors_output, s_len)
 
-        # output = self.MLP_projection(output.view(-1, 1, self.n_timestemp, self.hidden_dim))
-        output = torch.sum(time_attention[:, 1:], dim=1)
-        # output = self.prj(output)
+        output = torch.sum(torch.cat((node_output.unsqueeze(1), app_attention), dim=1), dim=1)
+        output = output.squeeze()
+        return output, node_hidden, neighbors_hidden, weights.data.cpu()
 
-        # output = self.MLP_projection(
-        #     torch.cat((node_output, applied_attention), dim=1).unsqueeze(1))
+class TestTimeAttention(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, n_heads, dropout_prob=0.1):
+        super(TestTimeAttention, self).__init__()
+        self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.TimeAttention = TimeAttention(n_heads, hidden_dim, max_neighbors, time_steps, dropout_prob)
+        self.prj = nn.Linear(hidden_dim, output_dim)
+        self.name = "RNN" + self.TimeAttention.name
+        self.dropout = nn.Dropout(dropout_prob)
 
-        # output = self.MLP_projection(
-        #     torch.cat((node_output.unsqueeze(1), neighbors_output.view(self.batch_size, self.max_neighbors, self.n_timestemp, self.hidden_dim)), dim=1))
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.n_layers = nlayers
+        self.time_steps = time_steps
+        self.max_neighbors = max_neighbors
+        self.n_heads = n_heads
 
-        # output = self.MLP_projection(torch.cat((node_output, neighbors_output.view(self.batch_size, -1, self.hidden_dim)), dim=1).unsqueeze(1))
+        self.reset_parameters()
+
+
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
+        self.batch_size = node_input.size(0)
+        self.use_cuda = next(self.parameters()).is_cuda
+
+        neighbors_input = neighbors_input.view(-1, self.time_steps, self.input_dim)              # reduce batch dim
+        node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
+        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
+        neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim) # reshape to normal dim
+        attn_mask = get_attn_mask(node_input.size()[:-1], self.use_cuda)
+
+        time_attention, time_weights = self.TimeAttention(node_output, neighbors_output, s_len, attn_mask=attn_mask)
+
+        output = self.prj(time_attention.view(-1, self.time_steps, self.hidden_dim))
+        output = torch.sum(output.view(self.batch_size, self.max_neighbors+1, -1), dim=1)
+        # output = torch.sum(output.view(self.batch_size, self.max_neighbors, -1), dim=1)
 
         output = output.squeeze()
-        return output, node_hidden, neighbors_hidden, [PackedWeight(net_weights[i].data.cpu(), time_weights[i].data.cpu()) for i in range(self.batch_size)]
+        return output, node_hidden, neighbors_hidden, time_weights.cpu()
+
+class JointSelfAttentionRNN(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, n_heads, dropout_prob=0.1):
+        super(JointSelfAttentionRNN, self).__init__()
+        self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.Attention = JointAttention(n_heads, hidden_dim, max_neighbors, time_steps, dropout_prob)
+        self.prj = nn.Linear(hidden_dim, output_dim)
+        self.name = "RNN" + self.Attention.name
+        self.dropout = nn.Dropout(dropout_prob)
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.n_layers = nlayers
+        self.time_steps = time_steps
+        self.max_neighbors = max_neighbors
+        self.n_heads = n_heads
+        self.criterion = nn.MSELoss()
 
 
-    def init_hidden(self, batch_size):
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
         """
-        generate a new hidden state to avoid the back-propagation to the beginning to the dataset
+        1) compute node RNN
+        2) compute neighbors RNN
+        3) compute attentions
+        4) apply dropout on attention
+        5) 
+
+        :param node_input: node input
+        :param node_hidden: hidden state for node rnn
+        :param neighbors_input: neighbors input
+        :param neighbors_hidden: hidden state for neighbors rnn
+        :param s_len: number of neighbors
         :return:
         """
-        weight = next(self.parameters()).data
-        return Variable(weight.new(self.n_layers, batch_size, self.hidden_dim).zero_())
+        self.batch_size = node_input.size(0)
+        self.use_cuda = next(self.parameters()).is_cuda
 
-    def repackage_hidden_state(self, h):
-        """Wraps hidden states in new Variables, to detach them from their history."""
-        if type(h) == Variable:
-            return Variable(h.data)
-        else:
-            return tuple(self.repackage_hidden_state(v) for v in h)
+        neighbors_input = neighbors_input.view(-1, self.time_steps, self.input_dim)
+        node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
+        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
+        neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim) # reshape to normal dim
+        
+        atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda)
+        output, attention = self.Attention(node_output, neighbors_output, s_len, atten_mask)
+        output = self.prj(output)
 
-    def compute_loss(self, predict, target):
-        return self.criterion(predict, target)
-
-    def compute_error(self, predict, target):
-        return rmse(predict, target)
+        output = output.squeeze()
+        return output, node_hidden, neighbors_hidden, attention
 
 

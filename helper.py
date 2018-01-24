@@ -9,6 +9,7 @@ from collections import namedtuple
 import torch
 import pickle
 from random import randint
+import numpy as np
 
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
@@ -32,6 +33,20 @@ T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
 CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
 PackedNeighbor = namedtuple('PackedNeighbor', ['neighbors', 'seq_len'])
 PackedWeight = namedtuple('PackedWeight', ['net_weight', 'time_weight'])
+
+def get_attn_mask(size, use_cuda):
+    ''' Get an attention mask to avoid using the subsequent info.'''
+    batch_size, neighbors, time_steps, hidden_dim = size
+    subsequent_mask = np.triu(np.ones((batch_size, time_steps, time_steps)), k=1).astype('uint8')
+    subsequent_mask = np.repeat(np.expand_dims(subsequent_mask, axis=1), (neighbors + 1) ** 2, axis=1)
+    subsequent_mask = torch.from_numpy(subsequent_mask)
+    if use_cuda:
+        subsequent_mask = subsequent_mask.cuda()
+    return subsequent_mask
+
+
+
+
 def mse(input, target):
     return torch.mean((input - target) ** 2)
 
