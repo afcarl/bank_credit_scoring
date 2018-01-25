@@ -29,7 +29,7 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
 
@@ -40,7 +40,7 @@ def __pars_args__():
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
     parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
-    parser.add_argument('--time_windows', type=int, default=1, help='Attention time windows.')
+    parser.add_argument('--time_windows', type=int, default=5, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")

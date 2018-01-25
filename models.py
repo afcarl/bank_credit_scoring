@@ -385,12 +385,12 @@ class JointAttention(nn.Module):
         self.dropout = nn.Dropout(drop_prob)
 
         # self.proj_s = NodeNeighborProjection(hidden_dim, time_steps)
-        # self.proj = NodeNeighborProjection(hidden_dim, time_steps)
-        # self.proj_v = NodeNeighborProjection((max_neighbors + 1) * time_steps, hidden_dim, transpose=False)
+        self.proj = NodeNeighborProjection(hidden_dim, time_steps)
+        self.proj_v = NodeNeighborProjection((max_neighbors + 1) * time_steps, hidden_dim, transpose=False)
 
-        self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=True)
-        self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=True)
-        self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=True)
+        # self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=True)
+        # self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=True)
+        # self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=True)
 
         self.hidden_dim = hidden_dim
         self.max_neighbors = max_neighbors
@@ -414,12 +414,12 @@ class JointAttention(nn.Module):
         key_values = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1)
         key_values = key_values.view(-1, self.time_steps, self.hidden_dim)
 
-        w_querys = self.proj_query(querys)
-        w_key = self.proj_key(key_values)
-        w_values = self.proj_value(key_values)
+        # w_querys = self.proj_query(querys)
+        # w_key = self.proj_key(key_values)
+        # w_values = self.proj_value(key_values)
 
-        # S = self.proj(querys, key_values)
-        S = torch.bmm(w_querys, w_key.transpose(1,2))
+        S = self.proj(querys, key_values)
+        # S = torch.bmm(w_querys, w_key.transpose(1,2))
         S = S.view(self.batch_size, self.max_neighbors+1, self.time_steps, self.time_steps)
 
         if attn_mask is not None:
@@ -434,8 +434,8 @@ class JointAttention(nn.Module):
         # assert (S.data == s_cat).any()
 
         A = self.softmax(S.contiguous().view(self.batch_size, self.time_steps, (self.max_neighbors+1)*self.time_steps))
-        # output = self.proj_v(A, key_values.view(self.batch_size, -1, self.hidden_dim))
-        output = torch.bmm(A, w_values.view(self.batch_size, -1, self.hidden_dim))
+        output = self.proj_v(A, key_values.view(self.batch_size, -1, self.hidden_dim))
+        # output = torch.bmm(A, w_values.view(self.batch_size, -1, self.hidden_dim))
         # output = torch.bmm(A, key_values.view(self.batch_size, -1, self.hidden_dim))
         return output, A.data.view(self.batch_size, self.time_steps, self.max_neighbors+1, -1)
 
