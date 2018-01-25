@@ -38,7 +38,6 @@ def get_attn_mask(size, use_cuda):
     ''' Get an attention mask to avoid using the subsequent info.'''
     batch_size, neighbors, time_steps, hidden_dim = size
     subsequent_mask = np.triu(np.ones((batch_size, time_steps, time_steps)), k=1).astype('uint8')
-    subsequent_mask = np.repeat(np.expand_dims(subsequent_mask, axis=1), (neighbors + 1) ** 2, axis=1)
     subsequent_mask = torch.from_numpy(subsequent_mask)
     if use_cuda:
         subsequent_mask = subsequent_mask.cuda()

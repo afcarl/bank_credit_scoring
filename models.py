@@ -160,9 +160,10 @@ class GuidedAttention(nn.Module):
 
 
 class NodeNeighborProjection(nn.Module):
-    def __init__(self, in_out_dim, baias_size):
+    def __init__(self, in_out_dim, baias_size, transpose=True):
         super(NodeNeighborProjection, self).__init__()
         self.W = nn.Parameter(torch.FloatTensor(in_out_dim, in_out_dim))
+        self.transpose=transpose
         if baias_size > 0:
             self.b = nn.Parameter(torch.FloatTensor(baias_size))
 
@@ -176,7 +177,10 @@ class NodeNeighborProjection(nn.Module):
 
     def forward(self, node, neighbor):
         output = node.matmul(self.W)
-        output = output.matmul(neighbor.transpose(1, 2))
+        if self.transpose:
+            output = output.matmul(neighbor.transpose(1, 2))
+        else:
+            output = output.matmul(neighbor)
         return output + self.b
 
 
@@ -280,54 +284,6 @@ class TimeAttention(nn.Module):
             atts[:, i] = A.data
         return outputs, atts
 
-
-class JointAttention(nn.Module):
-    def __init__(self, n_head, hidden_dim, max_neighbors, time_steps, drop_prob=0.1):
-        super(JointAttention, self).__init__()
-        self.name = "_JointAttention"
-
-        # self.softmax = nn.Sequential(nn.Tanh(), nn.Softmax(dim=-1))
-        self.softmax = nn.Softmax(dim=-1)
-        self.dropout = nn.Dropout(drop_prob)
-
-        self.proj = NodeNeighborProjection(hidden_dim, time_steps * (max_neighbors+1))
-        self.proj_v = NodeNeighborProjection((max_neighbors + 1) * time_steps, hidden_dim)
-        self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=False)
-        self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=False)
-
-        self.n_head = n_head
-        self.hidden_dim = hidden_dim
-        self.max_neighbors = max_neighbors
-        self.time_steps = time_steps
-        self.init_params()
-
-    def init_params(self):
-        for p in self.parameters():
-            if len(p.data.shape) == 1:
-                p.data.fill_(0)
-            else:
-                nn.init.xavier_normal(p.data)
-
-    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number, attn_mask=None):
-        self.batch_size = node_rnn_output.size(0)
-        self.use_cuda = next(self.parameters()).is_cuda
-
-
-        querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
-        key_values = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1)
-
-
-        S = self.proj(querys.contiguous().view(self.batch_size, -1, self.hidden_dim), key_values.view(self.batch_size, -1, self.hidden_dim))
-        S = S.view(self.batch_size, -1, self.time_steps, self.time_steps)
-        if attn_mask is not None:
-            S.data.masked_fill_(attn_mask, -float('inf'))
-        A = self.softmax(S.view(self.batch_size, (self.max_neighbors+1)*self.time_steps, (self.max_neighbors+1)*self.time_steps))
-        output = self.proj_v(A, key_values.view(self.batch_size, -1, self.hidden_dim).transpose(1,2))
-        return output.veiw(self.batch_size, self.max_neighbors+1, self.time_steps, self.hidden_dim), \
-               A.view(self.batch_size, self.max_neighbors+1, self.time_steps, self.max_neighbors+1, self.time_steps)
-
-
 class TestNetAttention(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, n_heads, dropout_prob=0.1):
         super(TestNetAttention, self).__init__()
@@ -417,6 +373,72 @@ class TestTimeAttention(BaseNet):
 
         output = output.squeeze()
         return output, node_hidden, neighbors_hidden, time_weights.cpu()
+
+
+class JointAttention(nn.Module):
+    def __init__(self, n_head, hidden_dim, max_neighbors, time_steps, drop_prob=0.1):
+        super(JointAttention, self).__init__()
+        self.name = "_JointAttention"
+
+        # self.softmax = nn.Sequential(nn.Tanh(), nn.Softmax(dim=-1))
+        self.softmax = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(drop_prob)
+        # self.proj_s = NodeNeighborProjection(hidden_dim, time_steps)
+        self.proj = NodeNeighborProjection(hidden_dim, time_steps)
+        self.proj_v = NodeNeighborProjection((max_neighbors + 1) * time_steps, hidden_dim, transpose=False)
+
+        self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+        self.n_head = n_head
+        self.hidden_dim = hidden_dim
+        self.max_neighbors = max_neighbors
+        self.time_steps = time_steps
+        self.init_params()
+
+    def init_params(self):
+        for p in self.parameters():
+            if len(p.data.shape) == 1:
+                p.data.fill_(0)
+            else:
+                nn.init.xavier_normal(p.data)
+
+    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number, attn_mask=None):
+        self.batch_size = node_rnn_output.size(0)
+        self.use_cuda = next(self.parameters()).is_cuda
+
+
+        querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
+        querys = querys.contiguous().view(-1, self.time_steps, self.hidden_dim)
+        key_values = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1)
+        key_values = key_values.view(-1, self.time_steps, self.hidden_dim)
+
+        w_querys = self.proj_query(querys)
+        w_key = self.proj_key(key_values)
+        w_values = self.proj_value(key_values)
+
+        S = self.proj(querys, key_values)
+        S = S.view(self.batch_size, self.max_neighbors+1, self.time_steps, self.time_steps)
+
+        if attn_mask is not None:
+            S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1), -float('inf'))
+        S = S.transpose(1,2)
+
+
+        # s = [self.proj(querys[:, i], key_values[:, i]) for i in range(self.max_neighbors+1)]
+        # s = [m.data.masked_fill_(attn_mask, -float('inf')) for m in s]
+        # s_cat = torch.stack(s, dim=2)
+        #
+        # assert (S.data == s_cat).any()
+
+        A = self.softmax(S.contiguous().view(self.batch_size, self.time_steps, (self.max_neighbors+1)*self.time_steps))
+        output = self.proj_v(A, key_values.view(self.batch_size, -1, self.hidden_dim))
+        # output = torch.bmm(A, w_values.view(self.batch_size, -1, self.hidden_dim))
+        # output = torch.bmm(A, key_values.view(self.batch_size, -1, self.hidden_dim))
+        return output, A.data.view(self.batch_size, self.time_steps, self.max_neighbors+1, -1)
+
+
 
 class JointSelfAttentionRNN(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, n_heads, dropout_prob=0.1):

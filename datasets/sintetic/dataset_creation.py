@@ -37,7 +37,7 @@ def generate_triangular_embedding(dim, num_neighbors):
         input_embedding += np.random.randint(-2, 2, 1)
         input_embedding = input_embedding.astype(np.int32)
         split_point = split_points[idx]
-        neighbors_split_offset = split_point + np.random.randint(0, 3)
+        neighbors_split_offset = split_point + np.random.randint(1, 3)
         neighbors_multiply_offset = np.random.randint(1, 3, num_neighbors)
         input_embeddings[idx] = torch.from_numpy(input_embedding[split_point:split_point+dim[1]])
         n_embedding = np.matmul(np.expand_dims(input_embedding, axis=-1), np.expand_dims(neighbors_multiply_offset, axis=0)).T
@@ -66,7 +66,7 @@ def generate_noise_embedding(dim, num_neighbors, offset_sampler= torch.distribut
         # else:
         #     target_embeddings[idx] = torch.mean(n_embedding[:int(num_neighbors/2), -1])
 
-    return input_embeddings, target_embeddings, neighbor_embeddings
+    return input_embeddings, target_embeddings, neighbor_embeddings, "simple"
 
 
 def generate_middle_select_embedding(dim, num_neighbors, pos=5):
@@ -148,7 +148,7 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_to_test((10000, 7), 4)
+    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_triangular_embedding((10000, 10), 4)
 
     pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.bin")), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, prefix+"_target_embeddings.bin"), "wb"))

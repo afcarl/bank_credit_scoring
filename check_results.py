@@ -8,10 +8,10 @@ import collections
 import plotly.plotly as py
 import plotly.tools as tls
 import copy
-
+from functools import reduce
 BASE_DIR = "./data"
 DATASET = "sintetic"
-MODEL = "RNN_TimeAttention"
+MODEL = "RNN_JointAttention"
 
 
 
@@ -32,7 +32,8 @@ def _axisformat(x, opts):
             'showticklabels': opts.get(x + 'ytick'),
         }
 
-
+fn_flatten = lambda l: [item for sublist in l for item in sublist]
+fn_y_name = lambda x: "Node" if x==0 else "Neighbor {}".format(x)
 def __reformat_duplicates__(a):
     counter = collections.Counter(a)
 
@@ -70,52 +71,95 @@ def plot_time_attention(weights, data, title, id, colorscale="Viridis"):
     #     )
     # ]
 
-
-
-    for net in range(weights.size(0)):
-        fn_y_name = lambda x: "Node Input" if x==0 else "Neighbor {}".format(x)
-        row_name = list(map(lambda x: str(x)[:3], data[0].numpy().tolist()))
-        row_val = __reformat_duplicates__(copy.copy(row_name))
-        col_name = list(map(lambda x: str(x)[:3], data[net].numpy().tolist()))
-        col_val = __reformat_duplicates__(copy.copy(col_name))
-        plot_data = [
-                go.Heatmap(
-                    z=weights[net].numpy().tolist(),
-                    x=row_val,
-                    y=col_val,
-                    colorscale=colorscale,
-                )
-            ]
-        layout = go.Layout(
-            title='{}-{}'.format(title, net),
-            xaxis=dict(
-                type="category",
-                tickmode="array",
-                tickvals=row_val,
-                ticktext=row_name,
-                autotick=False,
-                title='Node Input',
-                showticklabels=True,
-                tickangle=0,
-                showgrid=True,
-                mirror='ticks',
-            ),
-            yaxis=dict(
-                type="category",
-                tickmode="array",
-                tickvals=col_val,
-                ticktext=col_name,
-                autotick=False,
-                title=fn_y_name(net),
-                showticklabels=True,
-                tickangle=0,
-                showgrid=True,
-                mirror='ticks',
-            ),
+    row_name = list(map(lambda x: str(x)[:3], data[0].numpy().tolist()))
+    row_val = __reformat_duplicates__(copy.copy(row_name))
+    col_name = fn_flatten([list(map(lambda x: str(x)[:3], data[i].numpy().tolist())) for i in range(weights.size(1))])
+    col_val = __reformat_duplicates__(copy.copy(col_name))
+    print(len(col_val))
+    plot_data = [
+        go.Heatmap(
+            z=weights.view(len(row_name), -1),
+            x=col_val,
+            y=row_val,
+            colorscale=colorscale,
         )
+    ]
+    layout = go.Layout(
+        title='{}-{}'.format(title, id),
+        xaxis=dict(
+            type="category",
+            tickmode="array",
+            tickvals=col_val,
+            ticktext=col_name,
+            autotick=False,
+            title='Neighbors',
+            showticklabels=True,
+            tickangle=0,
+            showgrid=True,
+            mirror='ticks',
+        ),
+        yaxis=dict(
+            type="category",
+            tickmode="array",
+            tickvals=row_val,
+            ticktext=row_name,
+            title='Node input',
+            autotick=False,
+            showticklabels=True,
+            tickangle=0,
+            showgrid=True,
+            mirror='ticks',
+        ),
+    )
 
-        fig = go.Figure(data=plot_data, layout=layout)
-        py.plot(fig, filename='{}-{}-{}'.format(id, title, net))
+    fig = go.Figure(data=plot_data, layout=layout)
+    py.plot(fig, filename='{}-{}'.format(title, id))
+
+
+    # for net in range(weights.size(1)):
+    #     fn_y_name = lambda x: "Node" if x==0 else "Neighbor {}".format(x)
+    #     row_name = list(map(lambda x: str(x)[:3], data[0].numpy().tolist()))
+    #     row_val = __reformat_duplicates__(copy.copy(row_name))
+    #     col_name = list(map(lambda x: str(x)[:3], data[net].numpy().tolist()))
+    #     col_val = __reformat_duplicates__(copy.copy(col_name))
+    #     plot_data = [
+    #             go.Heatmap(
+    #                 z=weights[:, net].numpy().tolist(),
+    #                 x=row_val,
+    #                 y=col_val,
+    #                 colorscale=colorscale,
+    #             )
+    #         ]
+    #     layout = go.Layout(
+    #         title='{}-{}'.format(title, net),
+    #         xaxis=dict(
+    #             type="category",
+    #             tickmode="array",
+    #             tickvals=row_val,
+    #             ticktext=row_name,
+    #             autotick=False,
+    #             title='Node Input',
+    #             showticklabels=True,
+    #             tickangle=0,
+    #             showgrid=True,
+    #             mirror='ticks',
+    #         ),
+    #         yaxis=dict(
+    #             type="category",
+    #             tickmode="array",
+    #             tickvals=col_val,
+    #             ticktext=col_name,
+    #             autotick=False,
+    #             title=fn_y_name(net),
+    #             showticklabels=True,
+    #             tickangle=0,
+    #             showgrid=True,
+    #             mirror='ticks',
+    #         ),
+    #     )
+    #
+    #     fig = go.Figure(data=plot_data, layout=layout)
+    #     py.plot(fig, filename='{}-{}-{}'.format(id, title, net))
 
         #
         # vis.heatmap(
@@ -183,7 +227,11 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 if __name__ == "__main__":
     examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
+    skip = [9637, 2752, 6365, 3701, 5092]
     for example_id, example in examples.items():
+        if example_id in skip:
+            continue
+
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
         print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
         # plot_heatmap(example["weights"].sum(1), "net_weight", id=example_id)
