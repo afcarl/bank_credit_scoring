@@ -34,14 +34,15 @@ CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute
 PackedNeighbor = namedtuple('PackedNeighbor', ['neighbors', 'seq_len'])
 PackedWeight = namedtuple('PackedWeight', ['net_weight', 'time_weight'])
 
-def get_attn_mask(size, use_cuda):
+def get_attn_mask(size, use_cuda, time_size=10):
     ''' Get an attention mask to avoid using the subsequent info.'''
     batch_size, neighbors, time_steps, hidden_dim = size
-    subsequent_mask = np.triu(np.ones((batch_size, time_steps, time_steps)), k=1).astype('uint8')
-    subsequent_mask = torch.from_numpy(subsequent_mask)
+    upper_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=1).astype('uint8'))
+    lower_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=time_size).astype('uint8'))
+    mask = upper_mask + lower_mask.transpose(1, 2)
     if use_cuda:
-        subsequent_mask = subsequent_mask.cuda()
-    return subsequent_mask
+        mask = mask.cuda()
+    return mask
 
 
 

@@ -47,9 +47,8 @@ def generate_triangular_embedding(dim, num_neighbors):
     return input_embeddings, target_embeddings, neighbor_embeddings, "tr"
 
 
-def generate_noise_embedding(dim, num_neighbors, offset_sampler= torch.distributions.Categorical(torch.Tensor([ 0.25, 0.25, 0.25]))):
-    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).uniform_(0, 2)
-    input_embeddings = torch.clamp(input_embeddings, 0, 4)
+def generate_noise_embedding(dim, num_neighbors, offset_sampler = torch.distributions.Categorical(torch.Tensor([ 0.25, 0.25, 0.25]))):
+    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).uniform_(0, 10).int().float()
     input_embeddings, _ = torch.sort(input_embeddings, 1)
     neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
     target_embeddings = torch.FloatTensor(dim[0], dim[1]).zero_()
@@ -57,10 +56,10 @@ def generate_noise_embedding(dim, num_neighbors, offset_sampler= torch.distribut
     for idx in range(input_embeddings.size(0)):
         n_embedding = torch.FloatTensor(num_neighbors, dim[1], 1).zero_()
         n_embedding[0] = input_embeddings[idx]
-        n_embedding[-1] = torch.FloatTensor(dim[1], 1).uniform_(5, 15)
+        n_embedding[-1] = torch.FloatTensor(dim[1], 1).uniform_(-20, -10)
         n_embedding[1:-1] = input_embeddings[idx].repeat(2, 1, 1) + offset_sampler.sample(sample_shape=(2, 1, 1)).float()
-        neighbor_embeddings[idx] = n_embedding
-        target_embeddings[idx] = torch.mean(torch.cat((input_embeddings[idx].unsqueeze(0), n_embedding[:-1]), dim=0), dim=0)
+        neighbor_embeddings[idx] = n_embedding.int().float()
+        target_embeddings[idx] = torch.sum(torch.cat((input_embeddings[idx].unsqueeze(0), n_embedding[:-1]), dim=0), dim=0)
         # if input_embeddings[idx, -1, 0] >= 5:
         #     target_embeddings[idx] = torch.mean(n_embedding[int(num_neighbors/2):, -1])
         # else:
@@ -148,7 +147,7 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_triangular_embedding((10000, 10), 4)
+    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_noise_embedding((10000, 10), 4)
 
     pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.bin")), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, prefix+"_target_embeddings.bin"), "wb"))

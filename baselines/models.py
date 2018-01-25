@@ -144,10 +144,11 @@ class SimpleConcatRNN(nn.Module):
         neighbors_input = neighbors_input.view(-1, self.n_timestemp, self.input_dim)              # reduce batch dim
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
         neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
+        neighbors_output = neighbors_output.view(self.batch_size, self.max_neighbors, self.n_timestemp, -1)
+        output = torch.cat((node_output.unsqueeze(1), neighbors_output), dim=1)
+        output = self.prj(output.view(-1, self.n_timestemp, self.hidden_dim))
 
-        output = self.prj(node_output)
-
-        # output = torch.sum(torch.sum(output.view(self.batch_size, self.max_neighbors+1, -1), dim=-1), dim=-1)
+        output = torch.sum(output.view(self.batch_size, self.max_neighbors+1, self.n_timestemp), dim=1)
         # output = torch.sum(output.view(self.batch_size, self.max_neighbors+1, -1), dim=1)
         return output, node_hidden, neighbors_hidden
 
