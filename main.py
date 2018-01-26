@@ -40,7 +40,7 @@ def __pars_args__():
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
     parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
-    parser.add_argument('--time_windows', type=int, default=9, help='Attention time windows.')
+    parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
@@ -70,8 +70,11 @@ def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddi
         b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
         b_seq_len = seq_len[b_index]
 
-        node_hidden = model.repackage_hidden_state(node_hidden)
-        neighbor_hidden = model.repackage_hidden_state(neighbor_hidden)
+        node_hidden = model.init_hidden(args.eval_batch_size)
+        neighbor_hidden = model.init_hidden(args.max_neighbors * args.eval_batch_size)
+
+        # node_hidden = model.repackage_hidden_state(node_hidden)
+        # neighbor_hidden = model.repackage_hidden_state(neighbor_hidden)
 
         if args.use_cuda:
             b_input_sequence = b_input_sequence.cuda()
@@ -108,8 +111,8 @@ def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddi
 def train(model, optimizer, dataloader, input_embeddings, target_embeddings,neighbor_embeddings, seq_len):
     # TRAIN
     model.train()
-    node_hidden = model.init_hidden(args.batch_size)
-    neighbor_hidden = model.init_hidden(args.max_neighbors * args.batch_size)
+    # node_hidden = model.init_hidden(args.batch_size)
+    # neighbor_hidden = model.init_hidden(args.max_neighbors * args.batch_size)
     iter_loss = 0
     # iter_penal = 0
     for b_idx, b_index in enumerate(dataloader):
@@ -118,8 +121,8 @@ def train(model, optimizer, dataloader, input_embeddings, target_embeddings,neig
         b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
         b_seq_len = seq_len[b_index]
 
-        node_hidden = model.repackage_hidden_state(node_hidden)
-        neighbor_hidden = model.repackage_hidden_state(neighbor_hidden)
+        node_hidden = model.init_hidden(args.batch_size)
+        neighbor_hidden = model.init_hidden(args.max_neighbors * args.batch_size)
 
         if args.use_cuda:
             b_input_sequence = b_input_sequence.cuda()

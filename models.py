@@ -464,10 +464,6 @@ class ClusteringExamples(nn.Module):
         return prob
 
 
-
-
-
-
 class JointSelfAttentionRNN(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1):
         super(JointSelfAttentionRNN, self).__init__()
