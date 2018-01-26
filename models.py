@@ -1,5 +1,5 @@
 import torch
-from helper import rmse, TIMESTAMP, get_attn_mask
+from helper import rmse, TIMESTAMP, get_attn_mask, get_temperature
 from numpy import convolve
 import pickle
 from os.path import join as path_join
@@ -438,6 +438,33 @@ class JointAttention(nn.Module):
         # output = torch.bmm(A, w_values.view(self.batch_size, -1, self.hidden_dim))
         # output = torch.bmm(A, key_values.view(self.batch_size, -1, self.hidden_dim))
         return output, A.data.view(self.batch_size, self.time_steps, self.max_neighbors+1, -1)
+
+
+class ClusteringExamples(nn.Module):
+    def __init__(self, hidden_dim, out_dim, time_steps, decadicy_iteration, max_temp=1, min_tem=1, total_iteration=None):
+        super(ClusteringExamples, self).__init__()
+        self.name = "_cluster_example"
+        self.proj = nn.Sequential(nn.Linear(hidden_dim, out_dim), nn.ReLU())
+        self.temperature = get_temperature(max_temp, min_tem, decadicy_iteration, total_iteration)
+        self.select = nn.Softmax(dim=-1)
+
+
+        self.hidden_dim = hidden_dim
+        self.time_steps = time_steps
+
+    def forward(self, input, n_iter, top_k=1):
+        input = self.proj(input.view(-1, self.hidden_dim))
+        input /= self.temperaturep[n_iter]
+
+        prob = self.select(input)
+        max_value, selected_element = torch.max(prob)
+        prob[:] = 0
+        prob[selected_element] = 1
+
+        return prob
+
+
+
 
 
 

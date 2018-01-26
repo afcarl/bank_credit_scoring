@@ -226,8 +226,8 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
-    skip = [9637, 2752, 6365, 3701, 5092]
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "tr_time_window_saved_eval_iter_10 2.bin"), "rb"))
+    skip = [2120, 2587, 9637, 2752, 6365, 3701, 5092]
     for example_id, example in examples.items():
         if example_id in skip:
             continue

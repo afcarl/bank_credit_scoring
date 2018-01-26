@@ -45,6 +45,25 @@ def get_attn_mask(size, use_cuda, time_size=10):
     return mask
 
 
+def get_temperature(max_temp, min_temp, decadicy_iteration, total_iterations=None):
+    '''
+    get the temperature mask
+    :param max_temp: max temperature value
+    :param low_temp: min temperature value
+    :param decadicy_iteration: number of iteration with decadiment
+    :param total_iterations: total number of iteration
+    :return:
+    '''
+    if total_iterations == None:
+        total_iterations = decadicy_iteration
+
+    mask = np.linspace(max_temp, min_temp, decadicy_iteration).astype(np.float32)
+    if decadicy_iteration < total_iterations:
+        to_add = np.array([min_temp]*(total_iterations-decadicy_iteration)).astype(np.float32)
+        mask = np.concatenate((mask, to_add), axis=0)
+    return torch.from_numpy(mask)
+
+
 
 
 def mse(input, target):

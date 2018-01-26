@@ -40,7 +40,7 @@ def __pars_args__():
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
     parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
-    parser.add_argument('--time_windows', type=int, default=5, help='Attention time windows.')
+    parser.add_argument('--time_windows', type=int, default=9, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
