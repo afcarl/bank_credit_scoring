@@ -1,11 +1,7 @@
 import torch
 from helper import rmse, TIMESTAMP, get_attn_mask, get_temperature
-from numpy import convolve
-import pickle
-from os.path import join as path_join
 from torch.autograd import Variable
 import torch.nn as nn
-from helper import PackedWeight
 
 class BaseNet(nn.Module):
     def __init__(self):
@@ -66,104 +62,11 @@ class LayerNormalization(nn.Module):
 
         return ln_out
 
-class StructuredGuidedAttention(nn.Module):
-    def __init__(self, hidden_dim, att_hops, att_dim):
-        super(StructuredGuidedAttention, self).__init__()
-        self.name = "StructuredGuidedAttention"
-        self.S1 = nn.Linear(hidden_dim, att_dim)
-        self.S2 = nn.Linear(att_dim, att_hops)
-
-        self.hidden_dim = hidden_dim
-        self.attention_dim = att_dim
-        self.attention_hops = att_hops
-
-    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number):
-        self.batch_size = node_rnn_output.size(0)
-        self.time_steps = node_rnn_output.size(1)
-        self.max_neighbors_number = neigh_rnn_output.size(1)
-        self.use_cuda = next(self.parameters()).is_cuda
-
-
-        satcked_node_rnn_output = node_rnn_output.repeat(1, self.max_neighbors_number, 1)
-        neigh_rnn_output = neigh_rnn_output.view(self.batch_size, -1, self.hidden_dim)
-
-        if self.use_cuda:
-            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, self.max_neighbors_number * self.time_steps).cuda())
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps).cuda()
-            penal = Variable(torch.zeros(1).cuda())
-            I = Variable(torch.eye(self.attention_hops).cuda())
-        else:
-            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, neigh_rnn_output.size(1)))
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps)
-            penal = Variable(torch.zeros(1))
-            I = Variable(torch.eye(self.attention_hops))
-
-        for i in range(self.batch_size):
-            H = torch.mul(neigh_rnn_output[i], satcked_node_rnn_output[i])
-            s1 = self.S1(H)
-            s1 = s1 / (neighbors_number[0] ** 0.5)
-            s2 = self.S2(nn.functional.tanh(s1))
-            # Attention Weights and Embedding
-            A = nn.functional.softmax(s2.t(), dim=-1)
-            BA[i] = A
-            BW[i] = A.data.t().sum(-1).view(self.max_neighbors_number, -1)
-
-            # Penalization term
-            AAT = torch.mm(A, A.t())
-            P = torch.norm(AAT - I, 2)
-            penal += P * P
-
-        return BW, BA, neigh_rnn_output, penal
-
-class GuidedAttention(nn.Module):
-    def __init__(self, hidden_dim, att_hops):
-        super(GuidedAttention, self).__init__()
-        self.name = "GuidedAttention"
-        self.S1 = nn.Linear(hidden_dim, att_hops)
-
-        self.hidden_dim = hidden_dim
-        self.attention_hops = att_hops
-
-    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number):
-        self.batch_size = node_rnn_output.size(0)
-        self.time_steps  = node_rnn_output.size(1)
-        self.max_neighbors_number = neigh_rnn_output.size(1)
-        self.use_cuda = next(self.parameters()).is_cuda
-
-        satcked_node_rnn_output = node_rnn_output.repeat(1, self.max_neighbors_number, 1)
-        neigh_rnn_output = neigh_rnn_output.view(self.batch_size, -1, self.hidden_dim)
-
-
-        if self.use_cuda:
-            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, self.max_neighbors_number * self.time_steps).cuda())
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps).cuda()
-        else:
-            BA = Variable(torch.zeros(self.batch_size, self.attention_hops, neigh_rnn_output.size(1)))
-            BW = torch.zeros(self.batch_size, self.max_neighbors_number, self.time_steps)
-
-        for i in range(self.batch_size):
-            H = torch.mul(neigh_rnn_output[i], satcked_node_rnn_output[i])
-            s1 = self.S1(H)
-            s1 = s1.t()/(neighbors_number[0] ** 0.5)
-            # Attention Weights and Embedding
-            A = nn.functional.softmax(s1, dim=-1)
-            BA[i] = A
-            BW[i] = A.data.t().sum(-1).view(self.max_neighbors_number, -1)
-
-            # Penalization term
-            # AAT = torch.mm(A, A.t())
-            # P = torch.norm(AAT - I, 2)
-            # penal += P * P
-
-        return BW, BA, neigh_rnn_output
-
-
-
-class NodeNeighborProjection(nn.Module):
+class BiLinearProjection(nn.Module):
     def __init__(self, in_out_dim, baias_size, transpose=True):
-        super(NodeNeighborProjection, self).__init__()
+        super(BiLinearProjection, self).__init__()
         self.W = nn.Parameter(torch.FloatTensor(in_out_dim, in_out_dim))
-        self.transpose=transpose
+        self.transpose = transpose
         if baias_size > 0:
             self.b = nn.Parameter(torch.FloatTensor(baias_size))
 
@@ -191,7 +94,7 @@ class NetAttention(nn.Module):
 
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(drop_prob)
-        self.proj = NodeNeighborProjection(hidden_dim*time_steps, max_neighbors)
+        self.proj = BiLinearProjection(hidden_dim*time_steps, max_neighbors)
 
         self.n_head = n_head
         self.hidden_dim = hidden_dim
@@ -230,7 +133,7 @@ class TimeAttention(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(drop_prob)
 
-        self.proj = NodeNeighborProjection(hidden_dim, time_steps)
+        self.proj = BiLinearProjection(hidden_dim, time_steps)
         self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=False)
@@ -380,13 +283,11 @@ class JointAttention(nn.Module):
         super(JointAttention, self).__init__()
         self.name = "_JointAttention"
 
-        # self.softmax = nn.Sequential(nn.Tanh(), nn.Softmax(dim=-1))
         self.softmax = nn.Softmax(dim=-1)
-        self.dropout = nn.Dropout(drop_prob)
 
         # self.proj_s = NodeNeighborProjection(hidden_dim, time_steps)
-        self.proj = NodeNeighborProjection(hidden_dim, time_steps)
-        self.proj_v = NodeNeighborProjection((max_neighbors + 1) * time_steps, hidden_dim, transpose=False)
+        self.proj = BiLinearProjection(hidden_dim, time_steps)
+        self.proj_v = BiLinearProjection((max_neighbors + 1) * time_steps, hidden_dim, transpose=False)
 
         # self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=True)
         # self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=True)
@@ -424,7 +325,7 @@ class JointAttention(nn.Module):
 
         if attn_mask is not None:
             S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1), -float('inf'))
-        S = S.transpose(1,2)
+        S = S.transpose(1, 2)
 
 
         # s = [self.proj(querys[:, i], key_values[:, i]) for i in range(self.max_neighbors+1)]
@@ -490,7 +391,6 @@ class JointSelfAttentionRNN(BaseNet):
         2) compute neighbors RNN
         3) compute attentions
         4) apply dropout on attention
-        5) 
 
         :param node_input: node input
         :param node_hidden: hidden state for node rnn
@@ -509,6 +409,7 @@ class JointSelfAttentionRNN(BaseNet):
         
         atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
         output, attention = self.Attention(node_output, neighbors_output, s_len, atten_mask)
+        output = self.dropout(output)
         output = self.prj(output)
 
         output = output.squeeze()
