@@ -11,7 +11,7 @@ import copy
 from functools import reduce
 BASE_DIR = "./data"
 DATASET = "sintetic"
-MODEL = "RNN_JointAttention"
+MODEL = "RNN_FeatureJointAttention"
 
 
 
@@ -226,7 +226,7 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "tr_time_window_9_saved_eval_iter_10.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "good saved_eval_iter_10.bin"), "rb"))
     skip = [2120, 2587, 9637, 2752, 6365, 3701, 5092]
     for example_id, example in examples.items():
         if example_id in skip:

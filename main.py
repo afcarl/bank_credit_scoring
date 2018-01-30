@@ -3,7 +3,7 @@ from datasets.sintetic.utils import get_sintetic_embeddings
 
 from os.path import join as path_join
 from torch.utils.data import DataLoader
-from models import TestNetAttention, TestTimeAttention, JointSelfAttentionRNN
+from models import TestNetAttention, TestTimeAttention, JointSelfAttentionRNN, FeaturedJointSelfAttentionRNN
 import torch.optim as optim
 from torch.autograd import Variable
 import torch
@@ -60,9 +60,9 @@ def __pars_args__():
 def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddings, seq_len, save_rate):
     # EVAL
     performance = 0
+    iter_norm = 0
     model.eval()
-    node_hidden = model.init_hidden(args.eval_batch_size)
-    neighbor_hidden = model.init_hidden(args.max_neighbors * args.eval_batch_size)
+
     saved_weights = {}
     for b_idx, b_index in enumerate(dataloader):
         b_input_sequence = Variable(input_embeddings[b_index])
@@ -85,9 +85,10 @@ def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddi
             node_hidden = node_hidden.cuda()
             neighbor_hidden = neighbor_hidden.cuda()
 
-        predict, node_hidden, neighbor_hidden, weights = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
-                                                                  b_seq_len)
-        performance += model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
+        predict, node_hidden, neighbor_hidden, weights, norm = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
+                                                                  b_seq_len, b_target_sequence)
+        performance += model.compute_error(predict.squeeze(), b_target_sequence.squeeze()).data[0]
+        iter_norm += norm
         if random.random() > save_rate:
             b_input_sequence = b_input_sequence.data.cpu()
             b_target_sequence = b_target_sequence.data.cpu()
@@ -105,8 +106,10 @@ def eval(model, dataloader, input_embeddings, target_embeddings,neighbor_embeddi
                     predict=predict[row]
                 )
 
-    performance = performance.data/(b_idx + 1)
-    return performance, saved_weights
+    performance /= (b_idx + 1)
+    iter_norm /= (b_idx+1)
+
+    return performance, iter_norm, saved_weights
 
 def train(model, optimizer, dataloader, input_embeddings, target_embeddings,neighbor_embeddings, seq_len):
     # TRAIN
@@ -114,6 +117,7 @@ def train(model, optimizer, dataloader, input_embeddings, target_embeddings,neig
     # node_hidden = model.init_hidden(args.batch_size)
     # neighbor_hidden = model.init_hidden(args.max_neighbors * args.batch_size)
     iter_loss = 0
+    iter_norm = 0
     # iter_penal = 0
     for b_idx, b_index in enumerate(dataloader):
         b_input_sequence = Variable(input_embeddings[b_index])
@@ -135,23 +139,25 @@ def train(model, optimizer, dataloader, input_embeddings, target_embeddings,neig
 
         optimizer.zero_grad()
 
-        predict, node_hidden, neighbor_hidden, weights = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
-                                                                       b_seq_len)
+        predict, node_hidden, neighbor_hidden, weights, norm = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
+                                                                       b_seq_len, b_target_sequence)
         loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
 
         loss.backward()
         torch.nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
         optimizer.step()
 
-        iter_loss += loss.data
+        iter_loss += loss.data[0]
+        iter_norm += norm
         # iter_penal += penal.data
         b_idx += 1
         if (b_idx * args.batch_size) % 1000 == 0:
-            print("num example:{}\tloss:{}".format((b_idx * args.batch_size), iter_loss[0]/b_idx))
-    iter_loss /= b_idx
+            print("num example:{}\tloss:{}".format((b_idx * args.batch_size), iter_loss/b_idx))
+    iter_loss /= (b_idx + 1)
+    iter_norm /= (b_idx + 1)
     # iter_penal /= b_idx
     # return iter_loss, iter_penal
-    return iter_loss
+    return iter_loss, iter_norm
 
 
 if __name__ == "__main__":
@@ -164,7 +170,7 @@ if __name__ == "__main__":
 
 
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_sintetic_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = JointSelfAttentionRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
+    model = FeaturedJointSelfAttentionRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
                                   args.max_neighbors, input_embeddings.size(1), args.time_windows,
                                   dropout_prob=args.drop_prob)
 
@@ -182,47 +188,40 @@ if __name__ == "__main__":
         model.cuda()
 
 
-    total_loss = torch.FloatTensor()
-    # total_penal = torch.FloatTensor()
+    total_loss = []
+    total_norm = []
     # total_only_loss = torch.FloatTensor()
     eval_number = 0
-    eval_loss = torch.FloatTensor()
+    eval_loss = []
+    eval_norm = []
 
     for i_iter in range(args.n_iter):
-        iter_loss = train(model, optimizer, train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, seq_len)
-        if args.use_cuda:
-            total_loss = torch.cat((total_loss, iter_loss.cpu()))
-            # total_penal = torch.cat((total_penal, iter_penal.cpu()))
-            # total_only_loss = torch.cat((total_only_loss, (iter_loss - iter_penal).cpu()))
-        else:
-            total_loss = torch.cat((total_loss, iter_loss))
-            # total_penal = torch.cat((total_penal, iter_penal))
-            # total_only_loss = torch.cat((total_only_loss, iter_loss-iter_penal))
+        iter_loss, iter_norm = train(model, optimizer, train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, seq_len)
+        total_loss.append(iter_loss)
+        total_norm.append(iter_norm)
+
         print(iter_loss)
 
         # plot loss
         vis.line(
-            # Y=torch.stack((total_loss, total_penal, total_only_loss), dim=0).t(),
-            Y=total_loss,
+            Y=torch.FloatTensor([total_loss, total_norm]).t(),
             X=torch.LongTensor(range(i_iter + 1)),
             opts=dict(
                     # legend=["loss", "penal", "only_loss"],
-                    legend=["loss"],
+                    legend=["loss", "norm"],
                     title=model.name + " training loos",
                     showlegend=True),
             win="win:train-{}".format(EXP_NAME))
 
         if i_iter % args.eval_step == 0:
-            iter_eval, saved_weights = eval(model, eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, seq_len, args.save_rate)
-            if args.use_cuda:
-                eval_loss = torch.cat((eval_loss, iter_eval.cpu()))
-            else:
-                eval_loss = torch.cat((eval_loss, iter_eval))
+            iter_eval, iter_norm, saved_weights = eval(model, eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, seq_len, args.save_rate)
+            eval_loss.append(iter_eval)
+            eval_norm.append(iter_norm)
 
             vis.line(
-                Y=eval_loss,
+                Y=torch.FloatTensor([eval_loss, eval_norm]).t(),
                 X=torch.LongTensor(range(0, i_iter + 1, args.eval_step)),
-                opts=dict(legend=["RMSE"],
+                opts=dict(legend=["RMSE", "norm"],
                           title=model.name + " eval loos",
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
