@@ -9,8 +9,12 @@ import quandl
 from os.path import join
 
 ExganceInfo = namedtuple("ExganceInfo", ["market", "volume"])
+SiteInfo = namedtuple("SiteInfo", ["site_id", "sector", "sq_ft", "lat", "lng", "time_zone", "tz_offset"])
+
 API_KEY = "zTEsWpGga_5eqG6YCkRS"
-BASE_DIR = join("..", "..", "data", "stock")
+BASE_DIR = join("..", "..", "data")
+
+
 
 
 def fetch_data_by_exchange(fswym, tsym, exchange, time_to, time_frame="hour"):
@@ -33,10 +37,10 @@ def fetch_data_by_exchange(fswym, tsym, exchange, time_to, time_frame="hour"):
     return data.astype(np.float32), next_time_to
 
 
-def fetch_quandl_data(symbol, oldest_available_date, newest_availabele_date, api):
+def fetch_quandl_data(symbol, oldest_available_date, newest_availabele_date, api, database="WIKI"):
     quandl.ApiConfig.api_key = api
     try:
-        data = quandl.get("WIKI/{}".format(symbol), collapse="daily", start_date=oldest_available_date, end_date=newest_availabele_date)
+        data = quandl.get("{}/{}".format(database, symbol), collapse="daily", start_date=oldest_available_date, end_date=newest_availabele_date)
         return data
     except ValueError as e:
         print(e)

@@ -1,24 +1,33 @@
 import pickle
 from os import path
-from datasets.stock.utils import BASE_DIR
+from datasets.utils import BASE_DIR, MyBidict
 import pandas as pd
-from collections import OrderedDict, namedtuple
+from collections import OrderedDict
 from bidict import bidict
 import torch
 import random
-normalize = lambda x: (x.div(x.loc[0])) - 1
+import datetime as dt
 
+normalize = lambda x: (x.div(x.iloc[0])) - 1
+KEYS = ["Open", "High", "Low", "Close", "Volume"]
 
-
-def load_data():
-    meta_info = pickle.load(open(path.join(BASE_DIR, "meta_info.bin"), "rb"))
+def load_data(databases, start=dt.datetime(2017, 11, 1, 0, 0), end=dt.datetime(2017, 11, 29, 0, 0)):
+    meta_infos = MyBidict()
     symbols_dataframe = OrderedDict()
 
-    for symbol in meta_info.keys():
-        symbols_dataframe[symbol] = pd.read_csv(path.join(BASE_DIR, "csvs", "{}.csv".format(symbol)))
-
+    for database in databases:
+        meta_info = pickle.load(open(path.join(BASE_DIR, "stock", database, "meta_info.bin"), "rb"))
+        for symbol in meta_info.keys():
+            meta_infos[symbol] = meta_info[symbol]
+            symbol_df = pd.read_csv(path.join(BASE_DIR, "stock", database, "csvs", "{}.csv".format(symbol)))
+            symbol_df = symbol_df.set_index(pd.DatetimeIndex(symbol_df['Date']))
+            symbol_df = symbol_df[start:end][KEYS]
+            symbols_dataframe[symbol] = symbol_df
     symbols_dataframe = pd.concat(symbols_dataframe.values(), axis=1, keys=symbols_dataframe.keys())
-    return meta_info, symbols_dataframe.dropna(axis=0, how='any')
+    symbols_dataframe = symbols_dataframe.fillna(method='ffill')
+    assert symbols_dataframe.shape[0] == 21
+
+    return meta_infos, symbols_dataframe
 
 def compute_top_correlated_for_symbol(meta_info_inv, symbols_df, top_k):
     """
@@ -28,13 +37,13 @@ def compute_top_correlated_for_symbol(meta_info_inv, symbols_df, top_k):
     :param top_k: top k to return
     :return:
     """
-    adj_normalized_df = normalize(symbols_df.loc[:, pd.IndexSlice[:, "Adj. Close"]])
+    adj_normalized_df = symbols_df.loc[:, pd.IndexSlice[:, "Close"]]
     ret = {}
     for sector, symbols in meta_info_inv.items():
         for symbol in symbols:
             symbols_to_compare = filter(lambda x: x != symbol, symbols)
             symbol_df = adj_normalized_df[symbol]
-            corr_coef = [(symbol_to_compare, abs(symbol_df["Adj. Close"].corr(adj_normalized_df[symbol_to_compare]["Adj. Close"]))) for
+            corr_coef = [(symbol_to_compare, abs(symbol_df["Close"].corr(adj_normalized_df[symbol_to_compare]["Close"]))) for
                          symbol_to_compare in symbols_to_compare]
             sorted_corr_coef = list(map(lambda x:x[0], sorted(corr_coef, key=lambda corr_tuple: corr_tuple[1], reverse=True)))
             ret[symbol] = sorted_corr_coef[:top_k]
@@ -43,9 +52,7 @@ def compute_top_correlated_for_symbol(meta_info_inv, symbols_df, top_k):
 
 
 
-def generate_embedding(symbols_df, symbol_correlation,
-                       features=["Ex-Dividend", "Split Ratio", "Adj. Open", "Adj. High", "Adj. Low", "Adj. Close", "Adj. Volume"],
-                       ts_lenght=12):
+def generate_embedding(symbols_df, symbol_correlation, top_k):
     """
     generate the embeddings of the different timeseries:
     1) generate ids
@@ -57,47 +64,35 @@ def generate_embedding(symbols_df, symbol_correlation,
     :param ts_lenght: length of each example (timesereis is year long->extract many examples)
     :return:
     """
-    exp_for_stock = int(symbols_df.shape[0] / ts_lenght)
-    max_seq_len = exp_for_stock * ts_lenght
+
+    ts_lenght = symbols_df.shape[0] - 1
+    features_len = len(KEYS)
 
     # generate symbols ids
     symbol_to_id = bidict()
     for symbol in symbol_correlation.keys():
         symbol_to_id[symbol] = len(symbol_to_id) + 1
 
-    #keep only needed timeseries
-    symbols_df = symbols_df.loc[:, pd.IndexSlice[:, features]]
-
-    # normalize all the timeseries
-    norm_symbols_df = normalize(symbols_df)
-    norm_symbols_df.loc[:, pd.IndexSlice[:, "Ex-Dividend"]] = symbols_df.loc[:, pd.IndexSlice[:, "Ex-Dividend"]]
-    assert not norm_symbols_df.isnull().values.any(), "nan value present in the normalized values"
-
-
-
     #generate torch embedding
-    input_embeddings = torch.FloatTensor((len(symbol_to_id) + 1) * exp_for_stock, ts_lenght, len(features)).zero_()
-    target_embeddings = torch.FloatTensor((len(symbol_to_id) + 1) * exp_for_stock, ts_lenght, 1).zero_()
-    neighbor_embeddings = torch.FloatTensor((len(symbol_to_id) + 1) * exp_for_stock, len(symbol_correlation["A"]), ts_lenght, len(features)).zero_()
+    input_embeddings = torch.FloatTensor(len(symbol_to_id) + 1, ts_lenght, features_len).zero_()
+    target_embeddings = torch.FloatTensor(len(symbol_to_id) + 1, ts_lenght, 1).zero_()
+    neighbor_embeddings = torch.FloatTensor(len(symbol_to_id) + 1, top_k, ts_lenght, features_len).zero_()
 
     for symbol, symbol_id in sorted(symbol_to_id.items(), key=lambda x: x[1]):
-        symbol_df = norm_symbols_df[symbol]
-        input_embedding = torch.from_numpy(symbol_df.iloc[0:max_seq_len, :].values).float()
-        target_embedding = torch.from_numpy(symbol_df.iloc[1:max_seq_len+1]["Adj. Close"].values).float()
-        input_embeddings[symbol_id * exp_for_stock:(symbol_id + 1) * exp_for_stock] = input_embedding.view(exp_for_stock, ts_lenght, -1)
-        target_embeddings[symbol_id * exp_for_stock:(symbol_id + 1) * exp_for_stock] = target_embedding.view(exp_for_stock, ts_lenght, -1)
+        symbol_df = symbols_df[symbol]
+        input_embeddings[symbol_id] = torch.from_numpy(symbol_df.iloc[:-1].values).float()
+        target_embeddings[symbol_id] = torch.from_numpy(symbol_df.iloc[1:]["Close"].values).float()
 
-        n_embeddings = torch.FloatTensor(exp_for_stock, len(symbol_correlation["A"]), ts_lenght, len(features)).zero_()
+        n_embeddings = torch.FloatTensor(top_k, ts_lenght, features_len).zero_()
         for idx, n_symbol in enumerate(symbol_correlation[symbol]):
-            n_symbol_df = norm_symbols_df[n_symbol]
-            n_embedding = torch.from_numpy(n_symbol_df.iloc[0:max_seq_len, :].values).float()
-            n_embeddings[:, idx] = n_embedding.view(exp_for_stock, ts_lenght, -1)
+            n_symbol_df = symbols_df[n_symbol]
+            n_embeddings[idx] = torch.from_numpy(n_symbol_df.iloc[:-1].values).float()
 
-        neighbor_embeddings[symbol_id * exp_for_stock:(symbol_id + 1) * exp_for_stock] = n_embeddings
+        neighbor_embeddings[symbol_id] = n_embeddings
 
-    return input_embeddings, target_embeddings, neighbor_embeddings, symbol_to_id, exp_for_stock
+    return input_embeddings, target_embeddings, neighbor_embeddings, symbol_to_id
 
-def split_training_test_dataset(stock_ids, exp_for_stock, e_t_size=80):
+def split_training_test_dataset(stock_ids, e_t_size=700):
     """
     split the dataset in training/testing/eval dataset
     :param stock_ids: id of each stock
@@ -105,41 +100,38 @@ def split_training_test_dataset(stock_ids, exp_for_stock, e_t_size=80):
     """
 
     test_sample = random.sample(stock_ids, e_t_size)
-    test_dataset = []
     for s_idx in test_sample:
-        test_dataset.extend(list(range(s_idx*exp_for_stock, (s_idx+1)*exp_for_stock)))
         stock_ids.remove(s_idx)
 
     eval_sample = random.sample(stock_ids, e_t_size)
-    eval_dataset = []
     for s_idx in eval_sample:
-        eval_dataset.extend(list(range(s_idx * exp_for_stock, (s_idx + 1) * exp_for_stock)))
         stock_ids.remove(s_idx)
-
-    train_dataset = []
-    for s_idx in stock_ids:
-        train_dataset.extend(list(range(s_idx, s_idx + exp_for_stock)))
 
     return stock_ids, eval_sample, test_sample
 
 
 
+DATABASES = ["india", "tokyo", "usa"]
 
 if __name__ == "__main__":
-    meta_info, symbols_dataframe = load_data()
-    # pickle.dump(compute_top_correlated_for_symbol(meta_info.inverse, symbols_dataframe, 4), open(path.join(BASE_DIR, "neighbors.bin"), "wb"))
-    symbol_correlation = pickle.load(open(path.join(BASE_DIR, "neighbors.bin"), "rb"))
-    input_embeddings, target_embeddings, neighbor_embeddings, symbol_to_id, exp_for_stock = generate_embedding(symbols_dataframe, symbol_correlation)
+    # meta_infos, symbols_dataframe = load_data(DATABASES)
+    # norm_symbols_dataframe = normalize(symbols_dataframe)
+    #
+    # pickle.dump(norm_symbols_dataframe, open(path.join(BASE_DIR, "stock", "norm_dataframe.bin"), "wb"))
+    # pickle.dump(compute_top_correlated_for_symbol(meta_infos.inverse, norm_symbols_dataframe, 4), open(path.join(BASE_DIR, "stock", "neighbors.bin"), "wb"))
+    norm_symbols_dataframe = pickle.load(open(path.join(BASE_DIR, "stock", "norm_dataframe.bin"), "rb"))
+    symbol_correlation = pickle.load(open(path.join(BASE_DIR, "stock", "neighbors.bin"), "rb"))
+    input_embeddings, target_embeddings, neighbor_embeddings, symbol_to_id = generate_embedding(norm_symbols_dataframe, symbol_correlation, 4)
 
-    pickle.dump(input_embeddings, open(path.join(BASE_DIR, "input_embeddings.bin"), "wb"))
-    pickle.dump(target_embeddings, open(path.join(BASE_DIR, "target_embeddings.bin"), "wb"))
-    pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, "neighbor_embeddings.bin"), "wb"))
-    pickle.dump((symbol_to_id, exp_for_stock), open(path.join(BASE_DIR, "symbol_to_id_and_exp_for_stock.bin"), "wb"))
+    pickle.dump(input_embeddings, open(path.join(BASE_DIR, "stock", "input_embeddings.bin"), "wb"))
+    pickle.dump(target_embeddings, open(path.join(BASE_DIR, "stock", "target_embeddings.bin"), "wb"))
+    pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, "stock", "neighbor_embeddings.bin"), "wb"))
+    pickle.dump((symbol_to_id), open(path.join(BASE_DIR, "stock", "symbol_to_id.bin"), "wb"))
 
-    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(sorted(symbol_to_id.inv.keys()), exp_for_stock)
-    pickle.dump(train_dataset, open(path.join(BASE_DIR, "train_dataset.bin"), "wb"))
-    pickle.dump(eval_dataset, open(path.join(BASE_DIR, "eval_dataset.bin"), "wb"))
-    pickle.dump(test_dataset, open(path.join(BASE_DIR, "test_dataset.bin"), "wb"))
+    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(sorted(symbol_to_id.inv.keys()))
+    pickle.dump(train_dataset, open(path.join(BASE_DIR, "stock", "train_dataset.bin"), "wb"))
+    pickle.dump(eval_dataset, open(path.join(BASE_DIR, "stock", "eval_dataset.bin"), "wb"))
+    pickle.dump(test_dataset, open(path.join(BASE_DIR, "stock", "test_dataset.bin"), "wb"))
 
 
 
