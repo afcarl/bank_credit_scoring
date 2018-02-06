@@ -36,8 +36,8 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=20, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=51, help='Embedding size.')
+    parser.add_argument('--hidden_size', type=int, default=256, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
@@ -108,7 +108,7 @@ def setup_model(model, batch_size, args, is_training=True):
                 for row, idx in enumerate(b_index):
                     saved_weights[idx] = dict(
                         id=idx,
-                        input=b_input_sequence[row].t(),
+                        input=b_input_sequence[row],
                         target=b_target_sequence[row],
                         neighbors=b_neighbors_sequence[row].squeeze(),
                         predict=predict[row]

@@ -179,18 +179,18 @@ def generate_embedding(sites_normalized_df, days_df, hours_df, sites_attribute, 
 
             # generate neighbor embedding for the current day
             n_embedding = torch.cat((n_site_df, n_att_site.unsqueeze(0).expand(n_site_df.size(0), -1)), dim=1)
-            n_embedding = n_embedding[:num_example * example_len].view(num_example, example_len, -1)
+            n_embedding = n_embedding[:num_example * example_len]
             n_embeddings.append(n_embedding)
 
         input_embeddings.extend(input_embedding)
         target_embeddings.extend(target_embedding)
-        neighbor_embeddings.extend(torch.split(torch.stack(n_embeddings).transpose(0, 1), 1))
+        neighbor_embeddings.extend(torch.split(torch.stack(n_embeddings), example_len, dim=1))
         site_id_to_exp_idx[site] = list(range(start_len, len(input_embeddings)))
         site_id_to_idx[site] = len(site_id_to_idx)
 
     return torch.stack(input_embeddings), torch.stack(target_embeddings), torch.stack(neighbor_embeddings).squeeze(), site_id_to_idx, site_id_to_exp_idx
 
-def split_training_test_dataset(site_to_exp_idx, e_t_size=25):
+def split_training_test_dataset(site_to_exp_idx, e_t_size=20):
     """
     split the dataset in training/testing/eval dataset
     :param stock_ids: id of each site
