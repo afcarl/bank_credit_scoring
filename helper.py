@@ -1,14 +1,10 @@
 from __future__ import unicode_literals, print_function, division
 from io import open
-import glob
-import unicodedata
-import string
 import os
 from torch.utils.data import Dataset
 from collections import namedtuple
 import torch
 import pickle
-from random import randint
 import numpy as np
 
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
@@ -221,7 +217,7 @@ def get_embeddings(base_path, file_name, neighbors_file_name, embedding_dim, inp
 
 
 
-class CustomerDataset(Dataset):
+class CustomDataset(Dataset):
     def __init__(self, base_path, file_name):
         self.customers_list = torch.LongTensor(pickle.load(open(os.path.join(base_path, file_name), "rb")))
 
@@ -233,98 +229,43 @@ class CustomerDataset(Dataset):
         return c_idx
 
 
-class TestDataset(Dataset):
-    def __init__(self, length=10):
-        self.length = length
-        self.samples = [self.__generate_sequence__() for _ in range(2000)]
+class BaseNet(torch.nn.Module):
+    def __init__(self):
+        super(BaseNet, self).__init__()
+        self.criterion = torch.nn.MSELoss()
 
-
-    def __generate_sequence__(self):
-        return [[randint(0, 99)] for _ in range(self.length)]
-
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        sample = self.samples[idx]
-        input_sequence = torch.FloatTensor(sample)
-        target_sequence = input_sequence[-2]
-
-        return (input_sequence, target_sequence)
-
-
-
-NameSample = namedtuple('NameSample', ['category', 'line'])
-class NameDataset(Dataset):
-    def __init__(self, paths):
-        self.paths = glob.glob(paths)
-
-        self.all_letters = " " + string.ascii_letters + " .,;'-"
-        self.n_letters = len(self.all_letters) + 1  # Plus EOS marker and 0 pad
-
-        self.lines = []
-        self.all_categories = []
-
-        for filename in self.paths:
-            category = filename.split('/')[-1].split('.')[0]
-            self.all_categories.append(category)
-            lines = self.__readLines__(category, filename)
-            self.lines.extend(lines)
-
-        self.n_categories = len(self.all_categories)
-        self.max_sequence_length = max(map(len, map(lambda x: x.line, self.lines)))
-
-
-    def __unicodeToAscii__(self, s):
-        return ''.join(
-            c for c in unicodedata.normalize('NFD', s)
-            if unicodedata.category(c) != 'Mn'
-            and c in self.all_letters
-        )
-
-    # Read a file and split into lines
-    def __readLines__(self, category, filename):
-        lines = open(filename, encoding='utf-8').read().strip().split('\n')
-        return [NameSample(category, self.__unicodeToAscii__(line)) for line in lines]
-
-    # One-hot vector for category
-    def __category_tensor__(self, category):
-        li = self.all_categories.index(category)
-        tensor = torch.zeros(self.n_categories)
-        tensor[li] = 1
-        return tensor.expand(self.max_sequence_length, self.n_categories)
-
-    # One-hot matrix of first to last letters (not including EOS) for input
-    def __tensor_line__(self, line):
-        input_tensor = torch.zeros(self.max_sequence_length, self.n_letters)
-        target_tensor = torch.LongTensor(self.max_sequence_length).zero_()
-        for li in range(len(line)):
-            input_tensor[li][self.all_letters.find(line[li])] = 1
-            if li == (len(line) - 1):
-                target_tensor[li] = self.n_letters - 1 # EOS
+    def reset_parameters(self):
+        """
+        reset the network parameters using xavier init
+        :return:
+        """
+        for p in self.parameters():
+            if len(p.data.shape) == 1:
+                p.data.fill_(0)
             else:
-                target_tensor[li] = self.all_letters.find(line[li + 1])
-        return input_tensor, target_tensor, len(line)-1
+                torch.nn.init.xavier_normal(p.data)
 
+    def init_hidden(self, batch_size):
+        """
+        generate a new hidden state to avoid the back-propagation to the beginning to the dataset
+        :return:
+        """
+        weight = next(self.parameters()).data
+        return torch.autograd.Variable(weight.new(self.nlayers, batch_size, self.hidden_dim).zero_())
+        # return Variable(weight.new(batch_size, self.hidden_dim).zero_())
 
+    def repackage_hidden_state(self, h):
+        """Wraps hidden states in new Variables, to detach them from their history."""
+        if type(h) == torch.autograd.Variable:
+            return torch.autograd.Variable(h.data)
+        else:
+            return tuple(self.repackage_hidden_state(v) for v in h)
 
-    def __len__(self):
-        return len(self.lines)
+    def compute_loss(self, predict, target):
+        return self.criterion(predict, target)
 
-    def __getitem__(self, idx):
-        sample = self.lines[idx]
-
-        # transform
-        category, line = sample
-        category_one_hot = self.__category_tensor__(category)
-        input_sequence, target_sequence, seq_length = self.__tensor_line__(line)
-
-        return dict(input_sequence=torch.cat((input_sequence, category_one_hot), dim=1),
-                    target_sequence=target_sequence,
-                    seq_length=seq_length)
-
-
+    def compute_error(self, predict, target):
+        return rmse(predict, target)
 
 
 def ensure_dir(file_path):
@@ -336,3 +277,13 @@ def ensure_dir(file_path):
     if not os.path.exists(directory):
         os.makedirs(directory)
     return file_path
+
+
+class AttrProxy(object):
+    """Translates index lookups into attribute lookups."""
+    def __init__(self, module, prefix):
+        self.module = module
+        self.prefix = prefix
+
+    def __getitem__(self, i):
+        return getattr(self.module, self.prefix + str(i))

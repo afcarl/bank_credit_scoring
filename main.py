@@ -1,4 +1,4 @@
-from helper import CustomerDataset, get_embeddings, RiskToTensor, AttributeToTensor, ensure_dir
+from helper import CustomDataset, get_embeddings, RiskToTensor, AttributeToTensor, ensure_dir
 from datasets.sintetic.utils import get_sintetic_embeddings
 
 from os.path import join as path_join
@@ -174,8 +174,8 @@ if __name__ == "__main__":
                                   args.max_neighbors, input_embeddings.size(1), args.time_windows,
                                   dropout_prob=args.drop_prob)
 
-    train_dataset = CustomerDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
-    eval_dataset = CustomerDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
+    train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
+    eval_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
 
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
