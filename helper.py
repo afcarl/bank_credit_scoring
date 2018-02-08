@@ -243,7 +243,7 @@ class BaseNet(torch.nn.Module):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                torch.nn.init.xavier_normal(p.data)
+                torch.nn.init.xavier_uniform(p.data)
 
     def init_hidden(self, batch_size):
         """

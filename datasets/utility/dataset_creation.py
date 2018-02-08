@@ -11,18 +11,31 @@ import re
 import geopy.distance
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
-from numpy import array, arange, exp, log
+from numpy import array, arange, exp, log, nan
 
+TRAIN = [6, 8, 25, 29, 44, 45, 55, 78, 9, 12, 13, 41, 88, 99, 100, 101, 103, 109, 111, 116, 136, 281, 285, 304, 339, 341, 363, 366, 391, 399, 690, 716, 765, 648, 654, 673, 674, 697, 703, 718, 731, 737, 742, 887, 767, 808, 32, 42, 14, 137, 236]
+EVAL = [10, 49, 41, 56, 30, 144, 153, 186, 197, 213, 31, 88, 214, 400, 401, 404, 427, 454, 455, 472, 761, 744, 745, 766, 384, 755]
+TEST = [21, 51, 36, 65, 217, 218, 224, 228, 259, 270, 275, 22, 92, 474, 475, 478, 484, 492, 496, 512, 472, 832, 771, 786, 805, 386]
 KEYS = ["Open", "High", "Low", "Close", "Volume"]
 remove_space = lambda x: re.sub('\s', '', x)
 
 softplus = lambda x: log(1 + exp(x))
 start_dif = lambda x: x.div(x.iloc[0]) - 1
+softlog = lambda x: log(x + 1)
 
-def normalize(dataframe):
-    norm_df = dataframe.copy()
-    norm_df.loc[:, pd.IndexSlice[:, ["value"]]] = start_dif(norm_df.loc[:, pd.IndexSlice[:, ["value"]]])
-    return norm_df, dataframe.loc[:, pd.IndexSlice[:, ["value"]]].iloc[0]
+
+def setup_norm(type="softlog"):
+    if type == "start_dif":
+        def normalize(dataframe):
+            norm_df = dataframe.copy()
+            norm_df.loc[:, pd.IndexSlice[:, ["value"]]] = start_dif(norm_df.loc[:, pd.IndexSlice[:, ["value"]]])
+            return norm_df, dataframe.loc[:, pd.IndexSlice[:, ["value"]]].iloc[0]
+    elif type == "softlog":
+        def normalize(dataframe):
+            norm_df = dataframe.copy()
+            norm_df.loc[:, pd.IndexSlice[:, ["value", "estimated"]]] = softlog(norm_df.loc[:, pd.IndexSlice[:, ["value", "estimated"]]])
+            return norm_df
+    return normalize
 
 def one_hot_conversion(values):
     encoder = LabelEncoder()
@@ -71,8 +84,9 @@ def convert_attribute(sites_attribute):
 
     return ret, sector_encoder, tz_encoder
 
-def load_data(site_infos, resample_interval="60T"):
+def load_data(site_infos, resample_interval="180T", norm_type="softlog"):
     sites_dataframe = OrderedDict()
+    norm_fn = setup_norm(norm_type)
 
     for site_id in site_infos.keys():
         site_df = pd.read_csv(path.join(BASE_DIR, "utility", "csvs", "{}.csv".format(site_id)))
@@ -86,25 +100,42 @@ def load_data(site_infos, resample_interval="60T"):
         sites_dataframe[site_id] = site_df
 
     sites_dataframe = pd.concat(sites_dataframe.values(), axis=1, keys=sites_dataframe.keys())
+
     # resample timeseries and remove timeseries
     sites_dataframe = sites_dataframe.loc[:, pd.IndexSlice[:, ["value", "estimated"]]].resample(resample_interval).sum()
     sites_dataframe = sites_dataframe.dropna()
 
     # normalize df
-    sites_normalized_dataframe, start_values = normalize(sites_dataframe)
+    if norm_type == "start_dif":
+        sites_normalized_dataframe, start_values = norm_fn(sites_dataframe)
+    elif norm_type == "softlog":
+        sites_normalized_dataframe = norm_fn(sites_dataframe)
+    else:
+        raise NotImplementedError
+
     # extract day and hours from index
     idx = sites_normalized_dataframe.index
     days, time = (idx.strftime("%A"), idx.strftime("%H"))
 
+
     # convert to categorycal
     days_onehot, days_encoder = one_hot_conversion(days)
-    times_onehot, times_encoder = one_hot_conversion(time)
+    days_onehot = pd.DataFrame(days_onehot, index=idx, columns=days_encoder.classes_)
 
-    # convert to pandas dataframe
-    pd_days_onehot = pd.DataFrame(days_onehot, index=idx, columns=days_encoder.classes_)
-    pd_tz_onehot = pd.DataFrame(times_onehot, index=idx, columns=times_encoder.classes_)
+    if resample_interval[-1] == "T":
+        times_onehot, times_encoder = one_hot_conversion(time)
+        times_onehot = pd.DataFrame(times_onehot, index=idx, columns=times_encoder.classes_)
 
-    return sites_normalized_dataframe, start_values, pd_days_onehot, pd_tz_onehot
+    if norm_type == "start_dif" and resample_interval[-1] == "T":
+        return sites_normalized_dataframe, start_values, days_onehot, times_onehot
+    elif norm_type == "softlog" and resample_interval[-1] == "T":
+        return sites_normalized_dataframe, days_onehot, times_onehot
+    elif norm_type == "start_dif" and resample_interval[-1] == "D":
+        return sites_normalized_dataframe, start_values, days_onehot
+    elif norm_type == "softlog" and resample_interval[-1] == "D":
+        return sites_normalized_dataframe, days_onehot
+    else:
+        NotImplementedError
 
 def compute_top_correlated(sites_attribute, top_k):
     """
@@ -128,7 +159,7 @@ def compute_top_correlated(sites_attribute, top_k):
 
 
 
-def generate_embedding(sites_normalized_df, days_df, hours_df, sites_attribute, sites_correlation, example_len=10):
+def generate_embedding(sites_normalized_df, sites_attribute, sites_correlation, days_onehot, tz_onehot=None, example_len=10):
     """
     generate the embeddings of the different timeseries:
     1) convert the attribute in a feature vector
@@ -156,7 +187,13 @@ def generate_embedding(sites_normalized_df, days_df, hours_df, sites_attribute, 
         start_len = len(input_embeddings)
 
         # extract the needed timeseries
-        site_normalized_df = torch.from_numpy(pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[site, ["value", "estimated"]]], days_df, hours_df], axis=1).values).float()
+        if tz_onehot is not None:
+            site_normalized_df = torch.from_numpy(
+                pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[site, ["value", "estimated"]]], days_onehot, tz_onehot],
+                          axis=1).values).float()
+        else:
+            site_normalized_df = torch.from_numpy(
+                pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[site, ["value", "estimated"]]], days_onehot], axis=1).values).float()
 
         # extract the needed attribute
         att_site = torch.FloatTensor(sites_attribute[site])
@@ -174,7 +211,15 @@ def generate_embedding(sites_normalized_df, days_df, hours_df, sites_attribute, 
         n_embeddings = []
         for n_site in sites_correlation[site]:
             # extract neighbors timeseries
-            n_site_df = torch.from_numpy(pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[n_site, ["value", "estimated"]]], days_df, hours_df], axis=1).values).float()
+            if tz_onehot is not None:
+                n_site_df = torch.from_numpy(
+                    pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[n_site, ["value", "estimated"]]], days_onehot, tz_onehot],
+                              axis=1).values).float()
+            else:
+                n_site_df = torch.from_numpy(
+                    pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[n_site, ["value", "estimated"]]], days_onehot],
+                              axis=1).values).float()
+
             n_att_site = torch.FloatTensor(sites_attribute[n_site])
 
             # generate neighbor embedding for the current day
@@ -190,7 +235,7 @@ def generate_embedding(sites_normalized_df, days_df, hours_df, sites_attribute, 
 
     return torch.stack(input_embeddings), torch.stack(target_embeddings), torch.stack(neighbor_embeddings).squeeze(), site_id_to_idx, site_id_to_exp_idx
 
-def split_training_test_dataset(site_to_exp_idx, e_t_size=20):
+def split_training_test_dataset(site_to_exp_idx):
     """
     split the dataset in training/testing/eval dataset
     :param stock_ids: id of each site
@@ -199,21 +244,20 @@ def split_training_test_dataset(site_to_exp_idx, e_t_size=20):
     :return:
     """
 
-    test_sample = random.sample(site_to_exp_idx.keys(), e_t_size)
     test_dataset = []
-    for s_idx in test_sample:
-        test_dataset.extend(site_to_exp_idx[s_idx])
-        site_to_exp_idx.pop(s_idx, None)
-
-    eval_sample = random.sample(site_to_exp_idx.keys(), e_t_size)
     eval_dataset = []
-    for s_idx in eval_sample:
-        eval_dataset.extend(site_to_exp_idx[s_idx])
-        site_to_exp_idx.pop(s_idx, None)
-
     train_dataset = []
-    for s_idx in site_to_exp_idx:
-        train_dataset.extend(site_to_exp_idx[s_idx])
+
+    for site_id in TRAIN:
+        train_dataset.extend(site_to_exp_idx[site_id])
+
+    for site_id in EVAL:
+        eval_dataset.extend(site_to_exp_idx[site_id])
+
+    for site_id in TEST:
+        test_dataset.extend(site_to_exp_idx[site_id])
+
+    print("train len: {}\neval len: {}\ntest len: {}".format(len(train_dataset), len(eval_dataset), len(test_dataset)))
 
     return train_dataset, eval_dataset, test_dataset
 
@@ -221,25 +265,28 @@ def split_training_test_dataset(site_to_exp_idx, e_t_size=20):
 
 if __name__ == "__main__":
     meta_infos, sites_info = read_costituents()
-    # sites_normalized_dataframe, start_values, days_onehot, tz_onehot = load_data(sites_info)
-    #
-    # pickle.dump(sites_normalized_dataframe, open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "wb"))
+    sites_normalized_dataframe, days_onehot, tz_onehot = load_data(sites_info)
+    # sites_normalized_dataframe, days_onehot = load_data(sites_info)
+
+    pickle.dump(sites_normalized_dataframe, open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "wb"))
+    pickle.dump(days_onehot, open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "wb"))
+    pickle.dump(compute_top_correlated(sites_info, 4), open(path.join(BASE_DIR, "utility", "temp", "neighbors.bin"), "wb"))
+    pickle.dump(tz_onehot, open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "wb"))
     # pickle.dump(start_values, open(path.join(BASE_DIR, "utility", "temp", "start_values.bin"), "wb"))
-    # pickle.dump(days_onehot, open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "wb"))
-    # pickle.dump(tz_onehot, open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "wb"))
-    # pickle.dump(compute_top_correlated(sites_info, 4), open(path.join(BASE_DIR, "utility", "temp", "neighbors.bin"), "wb"))
+
+
 
     sites_normalized_dataframe = pickle.load(open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "rb"))
-    start_values = pickle.load(open(path.join(BASE_DIR, "utility", "temp", "start_values.bin"), "rb"))
     days_onehot = pickle.load(open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "rb"))
+    sites_correlation = pickle.load(open(path.join(BASE_DIR, "utility", "temp", "neighbors.bin"), "rb"))
     tz_onehot = pickle.load(open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "rb"))
-    sites_correlation = pickle.load(open(path.join(BASE_DIR,"utility", "temp", "neighbors.bin"), "rb"))
+
 
     input_embeddings, target_embeddings, neighbor_embeddings, site_to_idx, site_to_exp_idx = generate_embedding(sites_normalized_dataframe,
-                                                                                                            days_onehot,
-                                                                                                            tz_onehot,
-                                                                                                            sites_info,
-                                                                                                            sites_correlation)
+                                                                                                                sites_info,
+                                                                                                                sites_correlation,
+                                                                                                                days_onehot,
+                                                                                                                tz_onehot)
 
     pickle.dump(input_embeddings, open(path.join(BASE_DIR, "utility", "input_embeddings.bin"), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, "utility", "target_embeddings.bin"), "wb"))
