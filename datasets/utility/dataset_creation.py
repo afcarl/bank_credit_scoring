@@ -13,16 +13,16 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
 from numpy import array, arange, exp, log, nan
 
-TRAIN = [6, 8, 25, 29, 44, 45, 55, 78, 9, 12, 13, 41, 88, 99, 100, 101, 103, 109, 111, 116, 136, 281, 285, 304, 339, 341, 363, 366, 391, 399, 690, 716, 765, 648, 654, 673, 674, 697, 703, 718, 731, 737, 742, 887, 767, 808, 32, 42, 14, 137, 236]
-EVAL = [10, 49, 41, 56, 30, 144, 153, 186, 197, 213, 31, 88, 214, 400, 401, 404, 427, 454, 455, 472, 761, 744, 745, 766, 384, 755]
-TEST = [21, 51, 36, 65, 217, 218, 224, 228, 259, 270, 275, 22, 92, 474, 475, 478, 484, 492, 496, 512, 472, 832, 771, 786, 805, 386]
+TRAIN = [6, 8, 25, 29, 44, 45, 55, 78, 9, 12, 13, 41, 88, 99, 100, 101, 103, 109, 111, 116, 136, 281, 285, 304, 339, 341, 363, 366, 391, 399, 690, 716, 765, 648, 654, 673, 674, 697, 703, 718, 731, 737, 742, 887, 767, 808, 32, 42, 14, 137, 236, 22, 56,  31, 36]
+EVAL = [10, 49, 41, 30, 144, 153, 186, 197, 213, 88, 214, 400, 401, 404, 427, 454, 455, 472, 761, 744, 745, 766, 384, 755]
+TEST = [21, 51, 65, 217, 218, 224, 228, 259, 270, 275, 92, 474, 475, 478, 484, 492, 496, 512, 472, 832, 771, 786, 805, 386]
 KEYS = ["Open", "High", "Low", "Close", "Volume"]
 remove_space = lambda x: re.sub('\s', '', x)
 
 softplus = lambda x: log(1 + exp(x))
 start_dif = lambda x: x.div(x.iloc[0]) - 1
 softlog = lambda x: log(x + 1)
-
+identity = lambda x: x
 
 def setup_norm(type="softlog"):
     if type == "start_dif":
@@ -35,6 +35,14 @@ def setup_norm(type="softlog"):
             norm_df = dataframe.copy()
             norm_df.loc[:, pd.IndexSlice[:, ["value", "estimated"]]] = softlog(norm_df.loc[:, pd.IndexSlice[:, ["value", "estimated"]]])
             return norm_df
+    elif type == "softplus":
+        def normalize(dataframe):
+            norm_df = dataframe.copy()
+            norm_df.loc[:, pd.IndexSlice[:, ["value", "estimated"]]] = softplus(norm_df.loc[:, pd.IndexSlice[:, ["value", "estimated"]]])
+            return norm_df
+    else:
+        def normalize(dataframe):
+            return identity(dataframe)
     return normalize
 
 def one_hot_conversion(values):
@@ -77,14 +85,29 @@ def convert_attribute(sites_attribute):
 
 
     for (key, value), sector_one_hot, tz_one_hot in zip(sites_attribute.items(), sectors_one_hot, tzs_one_hot):
-        example = [value.sq_ft, value.lat, value.lng]
+        example = [log(value.sq_ft), value.lat, value.lng]
         example.extend(sector_one_hot.tolist())
         example.extend(tz_one_hot.tolist())
         ret[value.site_id] = example
 
     return ret, sector_encoder, tz_encoder
 
-def load_data(site_infos, resample_interval="180T", norm_type="softlog"):
+def load_data(site_infos, resample_interval="180T", norm_type="softplus"):
+    """
+    load the data in a pandas datafra
+    1) read the attribute
+    2) remove anomalies
+    3) resample the timeseries in interval of 3 hours
+    4) normalize the price for sqrt meter
+    5) concatenate and trucante nan
+    6) apply some sort of normalization according specification
+    7) create day in week feature
+    8) create hour in day features
+    :param site_infos: info of each site
+    :param resample_interval: resample interval
+    :param norm_type: type of normalization
+    :return:
+    """
     sites_dataframe = OrderedDict()
     norm_fn = setup_norm(norm_type)
 
@@ -97,21 +120,23 @@ def load_data(site_infos, resample_interval="180T", norm_type="softlog"):
         if anomaly_idx.any():
             site_df = site_df[anomaly_idx == False]
         site_df = site_df.drop("anomaly", axis=1)
+        # resample
+        site_df = site_df[["value", "estimated"]].resample(resample_interval).sum()
+        # sqt normalization
+        site_df["value"] /= sites_info[site_id].sq_ft
         sites_dataframe[site_id] = site_df
 
     sites_dataframe = pd.concat(sites_dataframe.values(), axis=1, keys=sites_dataframe.keys())
-
-    # resample timeseries and remove timeseries
-    sites_dataframe = sites_dataframe.loc[:, pd.IndexSlice[:, ["value", "estimated"]]].resample(resample_interval).sum()
+    # remove nan timeseries
     sites_dataframe = sites_dataframe.dropna()
 
     # normalize df
     if norm_type == "start_dif":
         sites_normalized_dataframe, start_values = norm_fn(sites_dataframe)
-    elif norm_type == "softlog":
+    elif norm_type == "softlog" or norm_type == "softplus":
         sites_normalized_dataframe = norm_fn(sites_dataframe)
     else:
-        raise NotImplementedError
+        sites_normalized_dataframe = sites_dataframe
 
     # extract day and hours from index
     idx = sites_normalized_dataframe.index
@@ -135,7 +160,7 @@ def load_data(site_infos, resample_interval="180T", norm_type="softlog"):
     elif norm_type == "softlog" and resample_interval[-1] == "D":
         return sites_normalized_dataframe, days_onehot
     else:
-        NotImplementedError
+        return sites_normalized_dataframe, days_onehot, times_onehot
 
 def compute_top_correlated(sites_attribute, top_k):
     """
@@ -173,7 +198,7 @@ def generate_embedding(sites_normalized_df, sites_attribute, sites_correlation, 
     :return:
     """
     site_id_to_idx = bidict()
-    site_id_to_exp_idx = {}
+    site_id_to_exp_idx = MyBidict()
 
     # format sites attribute
     sites_attribute, sector_encoder, tz_encoder = convert_attribute(sites_attribute)
@@ -249,13 +274,13 @@ def split_training_test_dataset(site_to_exp_idx):
     train_dataset = []
 
     for site_id in TRAIN:
-        train_dataset.extend(site_to_exp_idx[site_id])
+        train_dataset.extend(site_to_exp_idx.d[site_id])
 
     for site_id in EVAL:
-        eval_dataset.extend(site_to_exp_idx[site_id])
+        eval_dataset.extend(site_to_exp_idx.d[site_id])
 
     for site_id in TEST:
-        test_dataset.extend(site_to_exp_idx[site_id])
+        test_dataset.extend(site_to_exp_idx.d[site_id])
 
     print("train len: {}\neval len: {}\ntest len: {}".format(len(train_dataset), len(eval_dataset), len(test_dataset)))
 
@@ -266,7 +291,6 @@ def split_training_test_dataset(site_to_exp_idx):
 if __name__ == "__main__":
     meta_infos, sites_info = read_costituents()
     sites_normalized_dataframe, days_onehot, tz_onehot = load_data(sites_info)
-    # sites_normalized_dataframe, days_onehot = load_data(sites_info)
 
     pickle.dump(sites_normalized_dataframe, open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "wb"))
     pickle.dump(days_onehot, open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "wb"))
@@ -286,7 +310,8 @@ if __name__ == "__main__":
                                                                                                                 sites_info,
                                                                                                                 sites_correlation,
                                                                                                                 days_onehot,
-                                                                                                                tz_onehot)
+                                                                                                                tz_onehot,
+                                                                                                                example_len=16)
 
     pickle.dump(input_embeddings, open(path.join(BASE_DIR, "utility", "input_embeddings.bin"), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, "utility", "target_embeddings.bin"), "wb"))

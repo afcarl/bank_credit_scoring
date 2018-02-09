@@ -6,7 +6,6 @@ from collections import namedtuple
 import torch
 import pickle
 import numpy as np
-
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
 
@@ -29,6 +28,14 @@ T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
 CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
 PackedNeighbor = namedtuple('PackedNeighbor', ['neighbors', 'seq_len'])
 PackedWeight = namedtuple('PackedWeight', ['net_weight', 'time_weight'])
+
+use_cuda = torch.cuda.is_available()
+TENSOR_TYPE = dict(f_tensor=torch.cuda.FloatTensor if use_cuda else torch.FloatTensor,
+                   l_tensor=torch.cuda.LongTensor if use_cuda else torch.LongTensor,
+                   i_tensor=torch.cuda.IntTensor if use_cuda else torch.IntTensor,
+                   u_tensor=torch.cuda.ByteTensor if use_cuda else torch.ByteTensor)
+
+
 
 def get_attn_mask(size, use_cuda, time_size=10):
     ''' Get an attention mask to avoid using the subsequent info.'''
@@ -166,7 +173,27 @@ class AttributeToTensor(object):
                           un_status_one_hot
                           ))
 
-def get_embeddings(base_path, file_name, neighbors_file_name, embedding_dim, input_ts_len, output_ts_len, risk_tsfm, attribute_tsfm):
+def get_embeddings(data_dir, prefix=""):
+    use_cuda = torch.cuda.is_available()
+
+    input_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "input_embeddings.bin"), "rb"))
+    target_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "target_embeddings.bin"), "rb"))
+    neighbor_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "neighbor_embeddings.bin"), "rb"))
+    seq_len = torch.LongTensor([4]*input_embeddings.size(0))
+
+    if use_cuda:
+        input_embeddings = input_embeddings.cuda()
+        target_embeddings = target_embeddings.cuda()
+        neighbor_embeddings = neighbor_embeddings.cuda()
+        seq_len = seq_len.cuda()
+
+    if target_embeddings.dim() == 2:
+        target_embeddings = target_embeddings.unsqueeze(-1)
+
+    return input_embeddings, target_embeddings, neighbor_embeddings, seq_len
+
+
+def get_customer_embeddings(base_path, file_name, neighbors_file_name, embedding_dim, input_ts_len, output_ts_len, risk_tsfm, attribute_tsfm):
     """
     generate the embedding.
     1) Read the raw features
@@ -243,15 +270,17 @@ class BaseNet(torch.nn.Module):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                torch.nn.init.xavier_uniform(p.data)
+                torch.nn.init.xavier_normal(p.data)
 
     def init_hidden(self, batch_size):
         """
         generate a new hidden state to avoid the back-propagation to the beginning to the dataset
         :return:
         """
-        weight = next(self.parameters()).data
-        return torch.autograd.Variable(weight.new(self.nlayers, batch_size, self.hidden_dim).zero_())
+        # weight = next(self.parameters()).data
+        # hidden = torch.autograd.Variable(weight.new(self.nlayers, batch_size, self.hidden_dim).zero_())
+        return torch.autograd.Variable(torch.zeros((self.nlayers, batch_size, self.hidden_dim)))
+
         # return Variable(weight.new(batch_size, self.hidden_dim).zero_())
 
     def repackage_hidden_state(self, h):

@@ -9,8 +9,8 @@ import plotly.plotly as py
 import plotly.tools as tls
 import copy
 from functools import reduce
-BASE_DIR = "./data"
-DATASET = "sintetic"
+BASE_DIR = "../../data"
+DATASET = "utility"
 MODEL = "RNN_FeatureJointAttention"
 
 
@@ -48,39 +48,17 @@ def __reformat_duplicates__(a):
     return a
 
 
-def plot_time_attention(weights, data, title, id, colorscale="Viridis"):
-    # programmers = ['Alex', 'Nicole', 'Sara', 'Etienne', 'Chelsea', 'Jody', 'Marianne']
-    #
-    # base = datetime.datetime.today()
-    # date_list = [base - datetime.timedelta(days=x) for x in range(0, 180)]
-    #
-    # z = []
-    #
-    # for prgmr in programmers:
-    #     new_row = []
-    #     for date in date_list:
-    #         new_row.append(np.random.poisson())
-    #     z.append(list(new_row))
-    #
-    # data = [
-    #     go.Heatmap(
-    #         z=z,
-    #         x=date_list,
-    #         y=programmers,
-    #         colorscale='Viridis',
-    #     )
-    # ]
+def plot_time_attention(weights, neighbors_id, title, id, colorscale="Viridis"):
 
-    row_name = list(map(lambda x: str(x)[:3], data[0].numpy().tolist()))
-    row_val = __reformat_duplicates__(copy.copy(row_name))
-    col_name = fn_flatten([list(map(lambda x: str(x)[:3], data[i].numpy().tolist())) for i in range(weights.size(1))])
+    row_name = list(range(1, 11))
+    col_name = fn_flatten([[str(neighbor_id)]*10 for neighbor_id in neighbors_id])
     col_val = __reformat_duplicates__(copy.copy(col_name))
-    print(len(col_val))
+
     plot_data = [
         go.Heatmap(
             z=weights.view(len(row_name), -1),
             x=col_val,
-            y=row_val,
+            y=row_name,
             colorscale=colorscale,
         )
     ]
@@ -101,7 +79,7 @@ def plot_time_attention(weights, data, title, id, colorscale="Viridis"):
         yaxis=dict(
             type="category",
             tickmode="array",
-            tickvals=row_val,
+            tickvals=row_name,
             ticktext=row_name,
             title='Node input',
             autotick=False,
@@ -226,13 +204,19 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "good saved_eval_iter_10.bin"), "rb"))
-    skip = [2120, 2587, 9637, 2752, 6365, 3701, 5092]
-    for example_id, example in examples.items():
-        if example_id in skip:
-            continue
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_drop_0.0_cpu.bin"), "rb"))
+    site_id_to_exp_id = pickle.load(open(path_join(BASE_DIR, DATASET, "site_to_exp_idx.bin"), "rb"))
+    exp_id_to_site_id = {}
+    for site_id, exp_ids in site_id_to_exp_id.items():
+        for exp_id in exp_ids:
+            exp_id_to_site_id[exp_id] = site_id
+    neighbors = pickle.load(open(path_join(BASE_DIR, DATASET, "temp", "neighbors.bin"), "rb"))
 
-        print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        # plot_heatmap(example["weights"].sum(1), "net_weight", id=example_id)
-        plot_time_attention(example["weights"], torch.cat((example["input"], example["neighbors"]), dim=0), "time_weight", id=example_id)
+    for example_id, example in examples.items():
+        print("idx:{}\ntarget:{}\npredicted:{}".format(example["id"], example["target"], example["predict"]))
+        site_id = exp_id_to_site_id[example["id"]]
+        if site_id in [217, 484]:
+            continue
+        print("site:{}\tneighbors:{}".format(site_id, neighbors[site_id]))
+        # print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
+        plot_time_attention(example["weights"], [site_id, *neighbors[site_id]], "time_weight", id=example_id)

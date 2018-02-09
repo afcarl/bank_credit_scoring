@@ -23,7 +23,8 @@ class SimpleGRU(BaseNet):
                           num_layers=nlayers,
                           batch_first=True)
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
         self.drop = nn.Dropout(dropout_prob)
 
 
@@ -53,8 +54,7 @@ class StructuralRNN(BaseNet):
 
         self.dropout = nn.Dropout(dropout_prob)
         self.prj = nn.Sequential(nn.Linear(2*hidden_dim, hidden_dim),
-                                 nn.Linear(hidden_dim, output_dim),
-                                 nn.ReLU())
+                                 nn.ELU())
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim

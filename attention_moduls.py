@@ -1,6 +1,6 @@
 from torch import nn
 import torch
-from helper import get_temperature
+from helper import get_temperature, TENSOR_TYPE
 
 
 class ClusteringExamples(nn.Module):
@@ -50,10 +50,10 @@ class LayerNormalization(nn.Module):
 class BiLinearProjection(nn.Module):
     def __init__(self, in_out_dim, baias_size, transpose=True):
         super(BiLinearProjection, self).__init__()
-        self.W = nn.Parameter(torch.FloatTensor(in_out_dim, in_out_dim))
+        self.W = nn.Parameter(TENSOR_TYPE["f_tensor"](in_out_dim, in_out_dim))
         self.transpose = transpose
         if baias_size > 0:
-            self.b = nn.Parameter(torch.FloatTensor(baias_size))
+            self.b = nn.Parameter(TENSOR_TYPE["f_tensor"](baias_size))
 
 
     def init_params(self):
@@ -145,14 +145,11 @@ class TimeAttention(nn.Module):
         # querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors, -1, -1)
         # key_values = neigh_rnn_output
 
-        outputs = torch.autograd.Variable(torch.FloatTensor(self.batch_size, self.max_neighbors+1, self.time_steps, self.hidden_dim).zero_())
-        atts = torch.FloatTensor(self.batch_size, self.max_neighbors + 1, self.time_steps, self.time_steps).zero_()
-        # outputs = Variable(torch.FloatTensor(self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim).zero_())
-        # atts = torch.FloatTensor(self.batch_size, self.max_neighbors, self.time_steps, self.time_steps).zero_()
+        outputs = torch.autograd.Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors+1, self.time_steps, self.hidden_dim).zero_())
+        atts = TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors + 1, self.time_steps, self.time_steps).zero_()
+        # outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim).zero_())
+        # atts = TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors, self.time_steps, self.time_steps).zero_()
 
-        if self.use_cuda:
-            outputs = outputs.cuda()
-            atts = atts.cuda()
 
         for i in range(self.max_neighbors+1):
         # for i in range(self.max_neighbors):
@@ -198,14 +195,13 @@ class JointAttention(nn.Module):
             else:
                 nn.init.xavier_normal(p.data)
 
-    def forward(self, node_rnn_output, neigh_rnn_output, neighbors_number, attn_mask=None):
-        self.batch_size = node_rnn_output.size(0)
+    def forward(self, node_output, neigh_output, neighbors_number, attn_mask=None):
+        self.batch_size = node_output.size(0)
         self.use_cuda = next(self.parameters()).is_cuda
 
-
-        querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
+        querys = node_output.unsqueeze(1).expand(-1, self.max_neighbors + 1, -1, -1)
         querys = querys.contiguous().view(-1, self.time_steps, self.hidden_dim)
-        key_values = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1)
+        key_values = torch.cat((node_output.unsqueeze(1), neigh_output), dim=1)
         key_values = key_values.view(-1, self.time_steps, self.hidden_dim)
 
         w_querys = self.proj_query(querys)
@@ -213,13 +209,13 @@ class JointAttention(nn.Module):
         w_values = self.proj_value(key_values)
 
         # S = self.proj(querys, key_values)
-        S = torch.bmm(w_querys, w_key.transpose(1,2))
-        S = S.view(self.batch_size, self.max_neighbors+1, self.time_steps, self.time_steps)
+        S = torch.bmm(w_querys, w_key.transpose(1, 2))
+        S = S.view(self.batch_size, self.max_neighbors + 1, self.time_steps, self.time_steps)
+        S_norm = torch.norm(S.data.contiguous().view(self.batch_size, -1), 2, -1)
 
         if attn_mask is not None:
-            S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1), -float('inf'))
+            S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors + 1, -1, -1), -float('inf'))
         S = S.transpose(1, 2)
-
 
         # s = [self.proj(querys[:, i], key_values[:, i]) for i in range(self.max_neighbors+1)]
         # s = [m.data.masked_fill_(attn_mask, -float('inf')) for m in s]
@@ -227,11 +223,11 @@ class JointAttention(nn.Module):
         #
         # assert (S.data == s_cat).any()
 
-        A = self.softmax(S.contiguous().view(self.batch_size, self.time_steps, (self.max_neighbors+1)*self.time_steps))
+        A = self.softmax(S.contiguous().view(self.batch_size, self.time_steps, (self.max_neighbors + 1) * self.time_steps))
         # output = self.proj_v(A, key_values.view(self.batch_size, -1, self.hidden_dim))
         output = torch.bmm(A, w_values.view(self.batch_size, -1, self.hidden_dim))
         # output = torch.bmm(A, key_values.view(self.batch_size, -1, self.hidden_dim))
-        return output, A.data.view(self.batch_size, self.time_steps, self.max_neighbors+1, -1)
+        return output, A.data.view(self.batch_size, self.time_steps, self.max_neighbors + 1, -1), S_norm
 
 
 
@@ -242,10 +238,9 @@ class FeatureJointAttention(nn.Module):
         self.name = "_FeatureJointAttention"
 
         self.softmax = nn.Softmax(dim=-1)
-
-        self.proj_query = nn.Linear(hidden_dim + 3, hidden_dim, bias=False)
-        self.proj_key = nn.Linear(hidden_dim + 3, hidden_dim, bias=False)
-        self.proj_value = nn.Linear(hidden_dim + 3, hidden_dim, bias=False)
+        self.proj_query = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_key = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj_value = nn.Linear(hidden_dim, hidden_dim, bias=False)
         # self.proj_node_output = nn.Linear(hidden_dim + 3, hidden_dim)
 
         self.hidden_dim = hidden_dim
@@ -261,20 +256,20 @@ class FeatureJointAttention(nn.Module):
             else:
                 nn.init.xavier_normal(p.data)
 
-    def forward(self, node_rnn_output, neigh_rnn_output, conditional_output, neighbors_number, input_time_steps, attn_mask=None):
-        self.batch_size = node_rnn_output.size(0)
+    def forward(self, node_output, neigh_output, neighbors_number, input_time_steps, attn_mask=None):
+        self.batch_size = node_output.size(0)
         self.use_cuda = next(self.parameters()).is_cuda
 
-        node_rnn_output = torch.cat((node_rnn_output, conditional_output), dim=-1)
-        neigh_rnn_output = torch.cat((neigh_rnn_output, conditional_output.unsqueeze(1).expand(-1, self.max_neighbors, -1, -1)), dim=-1)
+        # node_output = torch.cat((node_output, conditional_output), dim=-1)
+        # neigh_output = torch.cat((neigh_output, conditional_output.unsqueeze(1).expand(-1, self.max_neighbors, -1, -1)), dim=-1)
 
-        querys = node_rnn_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
-        querys = querys.contiguous().view(-1, self.time_steps, self.hidden_dim + 3)
-        key_values = torch.cat((node_rnn_output.unsqueeze(1), neigh_rnn_output), dim=1)
+        querys = node_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
+        querys = querys.contiguous().view(-1, self.time_steps, self.hidden_dim)
+        key_values = torch.cat((node_output.unsqueeze(1), neigh_output), dim=1)
 
         w_querys = self.proj_query(querys)
-        w_key = self.proj_key(key_values.view(-1, self.time_steps, self.hidden_dim + 3))
-        w_values = self.proj_value(key_values.view(self.batch_size, -1, self.hidden_dim + 3))
+        w_key = self.proj_key(key_values.view(-1, self.time_steps, self.hidden_dim))
+        w_values = self.proj_value(key_values.view(self.batch_size, -1, self.hidden_dim))
 
         S = torch.bmm(w_querys, w_key.transpose(1, 2))
         S = S.view(self.batch_size, self.max_neighbors+1, self.time_steps, self.time_steps)
@@ -297,3 +292,4 @@ class FeatureJointAttention(nn.Module):
         output = torch.bmm(A, w_values).squeeze()
         # output = torch.bmm(A, key_values.view(self.batch_size, -1, self.hidden_dim))
         return output, A.data.view(self.batch_size, self.max_neighbors+1, -1), S_norm
+

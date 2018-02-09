@@ -59,7 +59,11 @@ class MyBidict(object):
         if key in self:
             self.inverse[self[key]].remove(key)
         self.d[key] = value
-        self.inverse.setdefault(value, []).append(key)
+        if type(value) == list:
+            for val in value:
+                self.inverse.setdefault(val, []).append(key)
+        else:
+            self.inverse.setdefault(value, []).append(key)
 
     def __len__(self):
         return len(self.d)
