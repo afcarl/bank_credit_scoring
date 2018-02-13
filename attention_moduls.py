@@ -170,7 +170,7 @@ class TimeAttention(nn.Module):
 
 
 class JointAttention(nn.Module):
-    def __init__(self, hidden_dim, max_neighbors, time_steps, drop_prob=0.1):
+    def __init__(self, hidden_dim, max_neighbors, time_steps, temperature=1):
         super(JointAttention, self).__init__()
         self.name = "_JointAttention"
 
@@ -187,7 +187,7 @@ class JointAttention(nn.Module):
         self.max_neighbors = max_neighbors
         self.time_steps = time_steps
         self.init_params()
-
+        self.temperature = temperature
     def init_params(self):
         for p in self.parameters():
             if len(p.data.shape) == 1:
@@ -199,41 +199,32 @@ class JointAttention(nn.Module):
         self.batch_size = node_output.size(0)
         self.use_cuda = next(self.parameters()).is_cuda
 
-        querys = node_output.unsqueeze(1).expand(-1, self.max_neighbors + 1, -1, -1)
-        querys = querys.contiguous().view(-1, self.time_steps, self.hidden_dim)
-        key_values = torch.cat((node_output.unsqueeze(1), neigh_output), dim=1)
-        key_values = key_values.view(-1, self.time_steps, self.hidden_dim)
+        querys = node_output.repeat(self.max_neighbors + 1, 1, 1)
+        key_values = torch.cat((node_output, torch.cat(torch.split(neigh_output, 1, dim=1), dim=0).squeeze()), dim=0)
 
         w_querys = self.proj_query(querys)
         w_key = self.proj_key(key_values)
-        w_values = self.proj_value(key_values)
+        w_values = self.proj_value(torch.cat((node_output.unsqueeze(1), neigh_output), dim=1).view(self.batch_size, -1, self.hidden_dim))
 
-        # S = self.proj(querys, key_values)
         S = torch.bmm(w_querys, w_key.transpose(1, 2))
-        S = S.view(self.batch_size, self.max_neighbors + 1, self.time_steps, self.time_steps)
+        S = torch.stack(torch.split(S, self.batch_size, dim=0), dim=1).squeeze()
+        # S = (S / self.hidden_dim**0.5) * (self.max_neighbors+1)
         S_norm = torch.norm(S.data.contiguous().view(self.batch_size, -1), 2, -1)
 
         if attn_mask is not None:
             S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors + 1, -1, -1), -float('inf'))
         S = S.transpose(1, 2)
 
-        # s = [self.proj(querys[:, i], key_values[:, i]) for i in range(self.max_neighbors+1)]
-        # s = [m.data.masked_fill_(attn_mask, -float('inf')) for m in s]
-        # s_cat = torch.stack(s, dim=2)
-        #
-        # assert (S.data == s_cat).any()
-
+        S /= self.temperature
         A = self.softmax(S.contiguous().view(self.batch_size, self.time_steps, (self.max_neighbors + 1) * self.time_steps))
-        # output = self.proj_v(A, key_values.view(self.batch_size, -1, self.hidden_dim))
         output = torch.bmm(A, w_values.view(self.batch_size, -1, self.hidden_dim))
-        # output = torch.bmm(A, key_values.view(self.batch_size, -1, self.hidden_dim))
         return output, A.data.view(self.batch_size, self.time_steps, self.max_neighbors + 1, -1), S_norm
 
 
 
 
 class FeatureJointAttention(nn.Module):
-    def __init__(self, hidden_dim, max_neighbors, time_steps):
+    def __init__(self, hidden_dim, max_neighbors, time_steps, temperature=1):
         super(FeatureJointAttention, self).__init__()
         self.name = "_FeatureJointAttention"
 
@@ -246,7 +237,7 @@ class FeatureJointAttention(nn.Module):
         self.hidden_dim = hidden_dim
         self.max_neighbors = max_neighbors
         self.time_steps = time_steps
-        self.temp = ((max_neighbors+1) * time_steps) ** 0.5
+        self.temperature = temperature
         self.init_params()
 
     def init_params(self):
@@ -260,36 +251,23 @@ class FeatureJointAttention(nn.Module):
         self.batch_size = node_output.size(0)
         self.use_cuda = next(self.parameters()).is_cuda
 
-        # node_output = torch.cat((node_output, conditional_output), dim=-1)
-        # neigh_output = torch.cat((neigh_output, conditional_output.unsqueeze(1).expand(-1, self.max_neighbors, -1, -1)), dim=-1)
-
-        querys = node_output.unsqueeze(1).expand(-1, self.max_neighbors+1, -1, -1)
-        querys = querys.contiguous().view(-1, self.time_steps, self.hidden_dim)
-        key_values = torch.cat((node_output.unsqueeze(1), neigh_output), dim=1)
+        querys = node_output.repeat(self.max_neighbors+1, 1, 1)
+        key_values = torch.cat((node_output, torch.cat(torch.split(neigh_output, 1, dim=1), dim=0).squeeze()), dim=0)
 
         w_querys = self.proj_query(querys)
-        w_key = self.proj_key(key_values.view(-1, self.time_steps, self.hidden_dim))
-        w_values = self.proj_value(key_values.view(self.batch_size, -1, self.hidden_dim))
+        w_key = self.proj_key(key_values)
+        w_values = self.proj_value(torch.cat((node_output.unsqueeze(1), neigh_output), dim=1).view(self.batch_size, -1, self.hidden_dim))
 
         S = torch.bmm(w_querys, w_key.transpose(1, 2))
-        S = S.view(self.batch_size, self.max_neighbors+1, self.time_steps, self.time_steps)
+        S = torch.stack(torch.split(S, self.batch_size), dim=1)
         S = S[:, :, input_time_steps]
         S_norm = torch.norm(S.data.contiguous().view(self.batch_size, -1), 2, -1)
 
         if attn_mask is not None:
-            S.data.masked_fill_(attn_mask[:, input_time_steps].unsqueeze(1).expand(-1, self.max_neighbors+1, -1), -float('inf'))
+            S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors+1, -1), -float('inf'))
         S = S.contiguous().view(self.batch_size, 1, -1)
-        # self.proj_cond_output(conditional_output)
 
-        # s = [self.proj(querys[:, i], key_values[:, i]) for i in range(self.max_neighbors+1)]
-        # s = [m.data.masked_fill_(attn_mask, -float('inf')) for m in s]
-        # s_cat = torch.stack(s, dim=2)
-        #
-        # assert (S.data == s_cat).any()
-
-        A = self.softmax(S.contiguous().view(self.batch_size, 1, -1))
-        # output = self.proj_v(A, values)
+        A = self.softmax(S)
         output = torch.bmm(A, w_values).squeeze()
-        # output = torch.bmm(A, key_values.view(self.batch_size, -1, self.hidden_dim))
         return output, A.data.view(self.batch_size, self.max_neighbors+1, -1), S_norm
 

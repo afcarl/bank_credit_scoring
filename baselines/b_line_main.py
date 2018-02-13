@@ -2,7 +2,7 @@ from helper import CustomDataset, get_embeddings, RiskToTensor, AttributeToTenso
 
 from os.path import join as path_join
 from torch.utils.data import DataLoader
-from baselines.models import SimpleGRU, StructuralRNN, FeaturedJointSelfAttentionRNN
+from baselines.models import SimpleGRU, StructuralRNN, NodeInterpolation, NodeNeighborsInterpolation
 import torch.optim as optim
 from torch.autograd import Variable
 import torch
@@ -27,8 +27,8 @@ config = {
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "utility"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "sintetic"), help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
@@ -37,8 +37,8 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=35, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
+    parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
@@ -49,7 +49,7 @@ def __pars_args__():
     parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
     parser.add_argument('--n_iter', type=int, default=102, help="Iteration number.")
     parser.add_argument('--eval_step', type=int, default=10, help='How often do an eval step')
-    parser.add_argument('--save_rate', type=float, default=0.8, help='How often do save an eval example')
+    parser.add_argument('--save_rate', type=float, default=0.95, help='How often do save an eval example')
     return parser.parse_args()
 
 
@@ -67,6 +67,9 @@ def setup_model(model, batch_size, args, is_training=True):
         saved_weights = {}
 
         for b_idx, b_index in enumerate(dataset):
+            if args.use_cuda:
+                b_index = b_index.cuda()
+
             b_input_sequence = Variable(input_embeddings[b_index])
             b_target_sequence = Variable(target_embeddings[b_index])
             b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
@@ -78,8 +81,7 @@ def setup_model(model, batch_size, args, is_training=True):
             if is_training:
                 optimizer.zero_grad()
 
-            predict, node_hidden, neighbor_hidden = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden,
-                                                                  b_seq_len)
+            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_seq_len)
 
             if is_training:
                 loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
@@ -102,7 +104,7 @@ def setup_model(model, batch_size, args, is_training=True):
                 b_target_sequence = b_target_sequence.data.cpu()
                 b_neighbors_sequence = b_neighbors_sequence.data.cpu()
                 predict = predict.data.cpu().squeeze()
-                print(b_target_sequence[0], predict[0])
+                # print(b_target_sequence[0], predict[0])
                 for row, idx in enumerate(b_index):
                     saved_weights[idx] = dict(
                         id=idx,
@@ -120,7 +122,7 @@ if __name__ == "__main__":
     args = __pars_args__()
 
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = SimpleGRU(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
+    model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
                                                  dropout_prob=args.drop_prob)
     model.reset_parameters()
 
@@ -179,22 +181,20 @@ if __name__ == "__main__":
             if best_model > iter_eval:
                 print("save best model")
                 best_model = iter_eval
-                torch.save(model, path_join(args.data_dir, "model.pt"))
+                torch.save(model, path_join(args.data_dir, "{}.pt".format(model.name)))
 
 
     # test performance
-    model = torch.load(path_join(args.data_dir, "model.pt"))
+    model = torch.load(path_join(args.data_dir, "{}.pt".format(model.name)))
     if model.name == "StructuralRNN":
         model.NodeRNN.flatten_parameters()
         model.NeighborRNN.flatten_parameters()
     elif model.name == "SimpleRNN":
         model.rnn.flatten_parameters()
-    else:
-        raise NotImplementedError
 
 
     test = setup_model(model, args.eval_batch_size, args, is_training=False)
     iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, seq_len)
-    print("test RMSE: {}",format(iter_test))
+    print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
         path_join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))

@@ -279,7 +279,10 @@ class BaseNet(torch.nn.Module):
         """
         # weight = next(self.parameters()).data
         # hidden = torch.autograd.Variable(weight.new(self.nlayers, batch_size, self.hidden_dim).zero_())
-        return torch.autograd.Variable(torch.zeros((self.nlayers, batch_size, self.hidden_dim)))
+        hidden = torch.autograd.Variable(torch.zeros((self.nlayers, batch_size, self.hidden_dim)))
+        if torch.cuda.is_available():
+            hidden = hidden.cuda()
+        return hidden
 
         # return Variable(weight.new(batch_size, self.hidden_dim).zero_())
 

@@ -99,15 +99,12 @@ class TestTimeAttention(BaseNet):
 
 
 class RNNJointAttention(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1, temperature=1):
         super(RNNJointAttention, self).__init__()
         self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
         self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
-        self.Attention = JointAttention(hidden_dim, max_neighbors, time_steps, dropout_prob)
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
-                                 nn.ReLU(),
-                                 nn.Linear(hidden_dim // 2, output_dim),
-                                 nn.ReLU())
+        self.Attention = JointAttention(hidden_dim, max_neighbors, time_steps, temperature)
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         self.name = "RNN" + self.Attention.name
         self.dropout = nn.Dropout(dropout_prob)
@@ -119,10 +116,10 @@ class RNNJointAttention(BaseNet):
         self.time_steps = time_steps
         self.max_neighbors = max_neighbors
         self.time_window = time_window
-        self.criterion = nn.MSELoss()
+        self.temperature = temperature
 
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
+    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
         """
         1) compute node RNN
         2) compute neighbors RNN
@@ -153,16 +150,104 @@ class RNNJointAttention(BaseNet):
         return output, attention, torch.mean(att_norms, dim=0)[0]
 
 
-class RNNFeaturedJointAttention(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1):
-        super(RNNFeaturedJointAttention, self).__init__()
+class JordanRNNJointAttention(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1, temperature=1):
+        super(JordanRNNJointAttention, self).__init__()
         self.NodeRNN = nn.GRUCell(input_dim+3, hidden_dim)
         self.NeighborRNN = nn.GRUCell(input_dim+3, hidden_dim)
+        self.Attention = FeatureJointAttention(hidden_dim, max_neighbors, time_steps, temperature)
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+
+        self.name = "Jordan_RNN" + self.Attention.name
+        self.dropout = nn.Dropout(dropout_prob)
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.nlayers = nlayers
+        self.time_steps = time_steps
+        self.max_neighbors = max_neighbors
+        self.time_window = time_window
+        self.criterion = nn.MSELoss()
+
+
+    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
+        """
+        1) compute node RNN
+        2) compute neighbors RNN
+        3) compute attentions
+        4) apply dropout on attention
+
+        :param node_input: node input
+        :param node_hidden: hidden state for node rnn
+        :param neighbors_input: neighbors input
+        :param neighbors_hidden: hidden state for neighbors rnn
+        :param s_len: number of neighbors
+        :return:
+        """
+        self.batch_size = node_input.size(0)
+        self.use_cuda = next(self.parameters()).is_cuda
+
+        flat_neighbors_input = neighbors_input.view(-1, self.time_steps, self.input_dim)
+        node_output = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, self.hidden_dim).zero_())
+        neighbors_output = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim).zero_())
+        outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 1).zero_())
+        conditional_outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 3).zero_())
+        attentions = TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, self.max_neighbors+1, self.time_steps).zero_()
+        att_norms = []
+
+        atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
+
+        for i in range(self.time_steps):
+            node_hidden = self.NodeRNN(torch.cat((node_input[:, i], conditional_outputs[:, i]), dim=-1), node_hidden)
+            neighbors_hidden = self.NeighborRNN(torch.cat((flat_neighbors_input[:, i],
+                       conditional_outputs[:, i].unsqueeze(1).expand(-1, self.max_neighbors, -1).contiguous().view(-1, 3)),
+                      dim=-1), neighbors_hidden)
+
+
+            node_output[:, i] = node_hidden
+            neighbors_output[:, :, i] = neighbors_hidden.contiguous().view(self.batch_size, self.max_neighbors, self.hidden_dim) # reshape to normal dim
+
+
+            output, attention, att_norm = self.Attention(node_output, neighbors_output, s_len, i, atten_mask[:, i])
+            att_norms.append(att_norm)
+
+            output = self.dropout(output)
+            output = self.prj(output)
+            outputs[:, i] = output
+            attentions[:, i] = attention
+
+            upper_bound = i+1
+            lower_bound = i-2 if i >= 3 else 0
+            diff = (outputs[:, lower_bound:upper_bound, 0] - target[:, lower_bound:upper_bound, 0])
+            if i < 2:
+                conditional_outputs[:, i+1] = torch.cat((diff, Variable(TENSOR_TYPE["f_tensor"](self.batch_size, 3-(i+1)).zero_())), dim=-1)
+            elif i < self.time_steps-1:
+                conditional_outputs[:, i+1] = diff
+
+        return outputs, attentions, torch.mean(torch.mean(torch.stack(att_norms, dim=0), dim=0))
+
+    def init_hidden(self, batch_size):
+        """
+        generate a new hidden state to avoid the back-propagation to the beginning to the dataset
+        :return:
+        """
+        hidden = Variable(torch.zeros((batch_size, self.hidden_dim)))
+        if torch.cuda.is_available():
+            hidden = hidden.cuda()
+        return hidden
+
+
+
+class RNNJordanJointAttention(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1):
+        super(RNNJordanJointAttention, self).__init__()
+        self.NodeRNN = nn.GRUCell(input_dim, hidden_dim)
+        self.NeighborRNN = nn.GRUCell(input_dim, hidden_dim)
         self.Attention = FeatureJointAttention(hidden_dim, max_neighbors, time_steps)
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
-                                 nn.ReLU(),
-                                 nn.Linear(hidden_dim // 2, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 # nn.Linear(hidden_dim // 2, output_dim),
+                                 nn.ReLU())
 
         self.name = "RNN" + self.Attention.name
         self.dropout = nn.Dropout(dropout_prob)
@@ -198,30 +283,21 @@ class RNNFeaturedJointAttention(BaseNet):
         node_output = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, self.hidden_dim).zero_())
         neighbors_output = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim).zero_())
         outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 1).zero_())
-        contitional_outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 3).zero_())
+        conditional_outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 3).zero_())
         attentions = TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, self.max_neighbors+1, self.time_steps).zero_()
         att_norms = []
 
-        for i in range(self.time_steps):
-            node_hidden = self.NodeRNN(torch.cat((node_input[:, i], contitional_outputs[:, i]), dim=-1), node_hidden)
-            neighbors_hidden = self.NeighborRNN(torch.cat((flat_neighbors_input[:, i],
-                       contitional_outputs[:, i].unsqueeze(1).expand(-1, self.max_neighbors, -1).contiguous().view(-1, 3)),
-                      dim=-1), neighbors_hidden)
+        atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
 
+        for i in range(self.time_steps):
+            node_hidden = self.NodeRNN(node_input[:, i], node_hidden)
+            neighbors_hidden = self.NeighborRNN(flat_neighbors_input[:, i], neighbors_hidden)
 
             node_output[:, i] = node_hidden
             neighbors_output[:, :, i] = neighbors_hidden.contiguous().view(self.batch_size, self.max_neighbors, self.hidden_dim) # reshape to normal dim
-            atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
 
 
-            # attend to current row
-            if i < self.time_steps - 1:
-                atten_mask[:, :, i+1:] = 1
-                atten_mask[:, i+1:] = 1
-                if i > 0:
-                    atten_mask[:, :i] = 1
-
-            output, attention, att_norm = self.Attention(node_output, neighbors_output, s_len, i, atten_mask)
+            output, attention, att_norm = self.Attention(node_output, neighbors_output, conditional_outputs, s_len, i, atten_mask[:, i])
             att_norms.append(att_norm)
 
             output = self.dropout(output)
@@ -233,11 +309,11 @@ class RNNFeaturedJointAttention(BaseNet):
             lower_bound = i-2 if i >= 3 else 0
             diff = (outputs[:, lower_bound:upper_bound, 0] - target[:, lower_bound:upper_bound, 0])
             if i < 2:
-                contitional_outputs[:, i+1] = torch.cat((diff, Variable(TENSOR_TYPE["f_tensor"](self.batch_size, 3-(i+1)).zero_())), dim=-1)
+                conditional_outputs[:, i+1] = torch.cat((diff, Variable(TENSOR_TYPE["f_tensor"](self.batch_size, 3-(i+1)).zero_())), dim=-1)
             elif i < self.time_steps-1:
-                contitional_outputs[:, i+1] = diff
+                conditional_outputs[:, i+1] = diff
 
-            # contitional_outputs[:, i, 0:min(upper_bound, 3)] =
+            # conditional_outputs[:, i, 0:min(upper_bound, 3)] =
 
         # outputs = self.dropout(outputs)
         # outputs = self.prj(outputs)
@@ -248,8 +324,10 @@ class RNNFeaturedJointAttention(BaseNet):
         generate a new hidden state to avoid the back-propagation to the beginning to the dataset
         :return:
         """
-        weight = next(self.parameters()).data
-        return Variable(weight.new(batch_size, self.hidden_dim).zero_())
+        hidden = Variable(torch.zeros((batch_size, self.hidden_dim)))
+        if torch.cuda.is_available():
+            hidden = hidden.cuda()
+        return hidden
 
 
 
@@ -347,7 +425,7 @@ class JordanJointAttention(BaseNet):
         node_output = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, self.hidden_dim).zero_())
         neighbors_output = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim).zero_())
         outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 1).zero_())
-        contitional_outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 3).zero_())
+        conditional_outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 3).zero_())
         attentions = TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, self.max_neighbors + 1, self.time_steps).zero_()
         att_norms = []
 
@@ -366,7 +444,7 @@ class JordanJointAttention(BaseNet):
                 if i > 0:
                     atten_mask[:, :i] = 1
 
-            output, attention, att_norm = self.Attention(node_output, neighbors_output, contitional_outputs, s_len, i, atten_mask)
+            output, attention, att_norm = self.Attention(node_output, neighbors_output, conditional_outputs, s_len, i, atten_mask)
             att_norms.append(att_norm)
 
             output = self.dropout(output)
@@ -378,9 +456,9 @@ class JordanJointAttention(BaseNet):
             lower_bound = i - 2 if i >= 3 else 0
             diff = (outputs[:, lower_bound:upper_bound, 0] - target[:, lower_bound:upper_bound, 0])
             if i < 2:
-                contitional_outputs[:, i + 1] = torch.cat((diff, Variable(TENSOR_TYPE["f_tensor"](self.batch_size, 3 - (i + 1)).zero_())),
+                conditional_outputs[:, i + 1] = torch.cat((diff, Variable(TENSOR_TYPE["f_tensor"](self.batch_size, 3 - (i + 1)).zero_())),
                                                           dim=-1)
             elif i < self.time_steps - 1:
-                contitional_outputs[:, i + 1] = diff
+                conditional_outputs[:, i + 1] = diff
 
         return outputs, attentions, torch.mean(torch.mean(torch.stack(att_norms, dim=0), dim=0))
