@@ -104,7 +104,8 @@ class RNNJointAttention(BaseNet):
         self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
         self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
         self.Attention = JointAttention(hidden_dim, max_neighbors, time_steps, temperature)
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         self.name = "RNN" + self.Attention.name
         self.dropout = nn.Dropout(dropout_prob)
