@@ -156,7 +156,8 @@ class JordanRNNJointAttention(BaseNet):
         self.NodeRNN = nn.GRUCell(input_dim+3, hidden_dim)
         self.NeighborRNN = nn.GRUCell(input_dim+3, hidden_dim)
         self.Attention = FeatureJointAttention(hidden_dim, max_neighbors, time_steps, temperature)
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         self.name = "Jordan_RNN" + self.Attention.name
         self.dropout = nn.Dropout(dropout_prob)

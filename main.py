@@ -11,7 +11,7 @@ import visdom
 from datetime import datetime
 import pickle
 
-vis = visdom.Visdom()
+vis = visdom.Visdom(port=8080)
 EXP_NAME = "exp-{}".format(datetime.now())
 
 
@@ -32,8 +32,8 @@ def __pars_args__():
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
 
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
-    parser.add_argument('--batch_size', type=int, default=30, help='Batch size for training.')
-    parser.add_argument('--eval_batch_size', type=int, default=20, help='Batch size for eval.')
+    parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
+    parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
     parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
@@ -42,7 +42,7 @@ def __pars_args__():
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
-    parser.add_argument('--temp', type=float, default=0.2, help="Softmax temperature")
+    parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
     parser.add_argument('--epsilon', type=float, default=0.1, help='Epsilon value for Adam Optimizer.')
@@ -59,10 +59,10 @@ def __pars_args__():
 if __name__ == "__main__":
     args = __pars_args__()
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = JordanRNNJointAttention(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
-                                  args.max_neighbors, input_embeddings.size(1), args.time_windows,
-                                  dropout_prob=args.drop_prob,
-                              temperature=args.temp)
+    model = RNNJointAttention(args.input_dim, args.hidden_size, args.output_size, args.num_layers,
+                                    args.max_neighbors, input_embeddings.size(1), args.time_windows,
+                                    dropout_prob=args.drop_prob,
+                                    temperature=args.temp)
 
     train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
     eval_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
@@ -80,7 +80,7 @@ if __name__ == "__main__":
         model.cuda()
 
     model.reset_parameters()
-    optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.001)
+    optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=0.)
 
 
 
@@ -123,7 +123,7 @@ if __name__ == "__main__":
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
 
-            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
+            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "adagrad_saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
 
             if best_model > iter_eval:
                 print("save best model")
@@ -138,4 +138,4 @@ if __name__ == "__main__":
     iter_test, iter_norm, saved_weights = eval_fn(model, test_dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, seq_len)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
-        path_join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))
+        path_join(args.data_dir, model.name, "adagrad_saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))

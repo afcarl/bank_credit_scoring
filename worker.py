@@ -31,11 +31,12 @@ def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbo
             b_target_sequence = b_target_sequence.data.cpu()
             b_neighbors_sequence = b_neighbors_sequence.data.cpu()
             predict = predict.data.cpu().squeeze()
+            print(predict)
             for row, idx in enumerate(b_index):
                 saved_weights[idx] = dict(
                     id=idx,
                     weights=weights[row].cpu(),
-                    input=b_input_sequence[row].t(),
+                    input=b_input_sequence[row],
                     target=b_target_sequence[row],
                     neighbors=b_neighbors_sequence[row].squeeze(),
                     predict=predict[row]

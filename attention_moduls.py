@@ -214,9 +214,10 @@ class JointAttention(nn.Module):
         if attn_mask is not None:
             S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors + 1, -1, -1), -float('inf'))
         S = S.transpose(1, 2)
+        S = S.contiguous().view(self.batch_size, self.time_steps, (self.max_neighbors + 1) * self.time_steps)
 
         S /= self.temperature
-        A = self.softmax(S.contiguous().view(self.batch_size, self.time_steps, (self.max_neighbors + 1) * self.time_steps))
+        A = self.softmax(S)
         output = torch.bmm(A, w_values.view(self.batch_size, -1, self.hidden_dim))
         return output, A.data.view(self.batch_size, self.time_steps, self.max_neighbors + 1, -1), S_norm
 
@@ -267,6 +268,7 @@ class FeatureJointAttention(nn.Module):
             S.data.masked_fill_(attn_mask.unsqueeze(1).expand(-1, self.max_neighbors+1, -1), -float('inf'))
         S = S.contiguous().view(self.batch_size, 1, -1)
 
+        S /= self.temperature
         A = self.softmax(S)
         output = torch.bmm(A, w_values).squeeze()
         return output, A.data.view(self.batch_size, self.max_neighbors+1, -1), S_norm

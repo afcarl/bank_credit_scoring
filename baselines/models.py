@@ -24,7 +24,7 @@ class SimpleGRU(BaseNet):
                           batch_first=True)
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ReLU())
+                                 nn.ELU())
         self.drop = nn.Dropout(dropout_prob)
 
 
@@ -36,10 +36,10 @@ class SimpleGRU(BaseNet):
         :param hidden: hidden state
         :return:
         """
-        output, hidden = self.rnn(input_sequence+hidden, hidden)
+        output, hidden = self.rnn(input_sequence, hidden)
         output = self.drop(output)
         output = self.prj(output)
-        return output, hidden, neighbor_hidden
+        return output
 
 
 
@@ -53,7 +53,8 @@ class StructuralRNN(BaseNet):
         self.name = "StructuralRNN"
 
         self.dropout = nn.Dropout(dropout_prob)
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -105,7 +106,8 @@ class NodeNeighborsInterpolation(BaseNet):
 
 
         self.name = "NodeNeighborsInterpolation"
-        self.prj = nn.Sequential(nn.Linear(2*hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(2*hidden_dim, output_dim),
+                                 nn.ELU())
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -113,7 +115,6 @@ class NodeNeighborsInterpolation(BaseNet):
         self.nlayers = nlayers
         self.time_steps = n_timestemps
         self.max_neighbors = max_neighbors
-        self.criterion = nn.MSELoss()
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
         self.batch_size = node_input.size(0)
@@ -136,7 +137,8 @@ class NodeInterpolation(BaseNet):
                                       nn.Dropout(dropout_prob))
 
         self.name = "NodeInterpolation"
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim

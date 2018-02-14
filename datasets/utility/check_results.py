@@ -8,10 +8,12 @@ import collections
 import plotly.plotly as py
 import plotly.tools as tls
 import copy
-from functools import reduce
+import numpy as np
+np.set_printoptions(precision=6, suppress=True, linewidth=200)
+torch.set_printoptions(precision=6)
 BASE_DIR = "../../data"
 DATASET = "utility"
-MODEL = "RNN_FeatureJointAttention"
+MODEL = "StructuralRNN"
 
 
 
@@ -42,7 +44,7 @@ def __reformat_duplicates__(a):
             c = 0
             for idx, val in enumerate(a):
                 if val == item:
-                    a[idx] = val + str(c)
+                    a[idx] = val + "." + str(c)
                     c += 1
 
     return a
@@ -50,8 +52,8 @@ def __reformat_duplicates__(a):
 
 def plot_time_attention(weights, neighbors_id, title, id, colorscale="Viridis"):
 
-    row_name = list(range(1, 11))
-    col_name = fn_flatten([[str(neighbor_id)]*10 for neighbor_id in neighbors_id])
+    row_name = list(range(1, 17))
+    col_name = fn_flatten([[str(neighbor_id)]*16 for neighbor_id in neighbors_id])
     col_val = __reformat_duplicates__(copy.copy(col_name))
 
     plot_data = [
@@ -204,19 +206,20 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_drop_0.0_cpu.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_drop_0.0.bin"), "rb"))
     site_id_to_exp_id = pickle.load(open(path_join(BASE_DIR, DATASET, "site_to_exp_idx.bin"), "rb"))
-    exp_id_to_site_id = {}
-    for site_id, exp_ids in site_id_to_exp_id.items():
-        for exp_id in exp_ids:
-            exp_id_to_site_id[exp_id] = site_id
-    neighbors = pickle.load(open(path_join(BASE_DIR, DATASET, "temp", "neighbors.bin"), "rb"))
+    sites_correlation = pickle.load(open(path_join(BASE_DIR, DATASET, "temp", "neighbors.bin"), "rb"))
+    prev_site_id = 0
 
     for example_id, example in examples.items():
-        print("idx:{}\ntarget:{}\npredicted:{}".format(example["id"], example["target"], example["predict"]))
-        site_id = exp_id_to_site_id[example["id"]]
-        if site_id in [217, 484]:
+        site_id = site_id_to_exp_id.inverse[example["id"]][0]
+        if prev_site_id == site_id:
             continue
-        print("site:{}\tneighbors:{}".format(site_id, neighbors[site_id]))
+        prev_site_id = site_id
+
+        print("idx:{}\ntarget:{}\npredicted:{}".format(example["id"], example["target"], example["predict"]))
+        print("site:{}\tneighbors:{}".format(site_id, sites_correlation[site_id]))
+        print(example["input"][:, 0])
+        print(example["neighbors"][:, :, 0].t())
         # print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        plot_time_attention(example["weights"], [site_id, *neighbors[site_id]], "time_weight", id=example_id)
+        # plot_time_attention(example["weights"], [site_id, *sites_correlation[site_id]], "time_weight", id=example_id)

@@ -66,7 +66,7 @@ def read_costituents():
     for id, site_id, industry, sector, sq_ft, lat, lng, time_zone, tz_offset in site_info.itertuples():
         sector = "{}_{}".format(remove_space(industry), remove_space(sector))
         meta_infos[site_id] = sector
-        site_infos[site_id] = SiteInfo(site_id, sector, log(sq_ft), lat, lng, time_zone, tz_offset)
+        site_infos[site_id] = SiteInfo(site_id, sector, sq_ft, lat, lng, time_zone, tz_offset)
 
     return meta_infos, site_infos
 
@@ -85,14 +85,14 @@ def convert_attribute(sites_attribute):
 
 
     for (key, value), sector_one_hot, tz_one_hot in zip(sites_attribute.items(), sectors_one_hot, tzs_one_hot):
-        example = [value.sq_ft, value.lat, value.lng]
+        example = [log(value.sq_ft), value.lat, value.lng]
         example.extend(sector_one_hot.tolist())
         example.extend(tz_one_hot.tolist())
         ret[value.site_id] = example
 
     return ret, sector_encoder, tz_encoder
 
-def load_data(site_infos, resample_interval="180T", norm_type=""):
+def load_data(site_infos, resample_interval="180T", norm_type="softplus"):
     """
     load the data in a pandas datafra
     1) read the attribute
