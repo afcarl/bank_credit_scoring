@@ -13,7 +13,7 @@ np.set_printoptions(precision=6, suppress=True, linewidth=200)
 torch.set_printoptions(precision=6)
 BASE_DIR = "../../data"
 DATASET = "utility"
-MODEL = "StructuralRNN"
+MODEL = "Jordan_RNN_FeatureJointAttention"
 
 
 
@@ -209,17 +209,19 @@ if __name__ == "__main__":
     examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_drop_0.0.bin"), "rb"))
     site_id_to_exp_id = pickle.load(open(path_join(BASE_DIR, DATASET, "site_to_exp_idx.bin"), "rb"))
     sites_correlation = pickle.load(open(path_join(BASE_DIR, DATASET, "temp", "neighbors.bin"), "rb"))
-    prev_site_id = 0
+    site_to_idx = pickle.load(open(path_join(BASE_DIR, DATASET,  "site_to_idx.bin"), "rb"))
+    prev_site = 0
 
     for example_id, example in examples.items():
         site_id = site_id_to_exp_id.inverse[example["id"]][0]
-        if prev_site_id == site_id:
+        site = site_to_idx.inv[site_id]
+        if prev_site == site:
             continue
-        prev_site_id = site_id
+        prev_site = site
 
         print("idx:{}\ntarget:{}\npredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("site:{}\tneighbors:{}".format(site_id, sites_correlation[site_id]))
+        print("site:{}\tneighbors:{}".format(site, sites_correlation[site]))
         print(example["input"][:, 0])
         print(example["neighbors"][:, :, 0].t())
         # print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        # plot_time_attention(example["weights"], [site_id, *sites_correlation[site_id]], "time_weight", id=example_id)
+        # plot_time_attention(example["weights"], [site, *sites_correlation[site]], "time_weight", id=example_id)

@@ -25,8 +25,8 @@ config = {
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "utility"), help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
@@ -35,8 +35,8 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=35, help='Embedding size.')
+    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
     parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     test_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.test_file_name)
 
 
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1,
                                   drop_last=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=1,
                                  drop_last=True)
@@ -80,7 +80,7 @@ if __name__ == "__main__":
         model.cuda()
 
     model.reset_parameters()
-    optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=0.)
+    optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
 
 
 
@@ -123,7 +123,7 @@ if __name__ == "__main__":
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
 
-            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "adagrad_saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
+            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "weight_reg_adagrad_saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
 
             if best_model > iter_eval:
                 print("save best model")

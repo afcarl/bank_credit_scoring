@@ -7,6 +7,8 @@ import pandas as pd
 from collections import namedtuple
 import quandl
 from os.path import join
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+
 
 ExganceInfo = namedtuple("ExganceInfo", ["market", "volume"])
 SiteInfo = namedtuple("SiteInfo", ["site_id", "sector", "sq_ft", "lat", "lng", "time_zone", "tz_offset"])
@@ -73,3 +75,17 @@ class MyBidict(object):
 
     def keys(self):
         return sorted(self.d.keys())
+
+
+def one_hot_conversion(values):
+    encoder = LabelEncoder()
+    if type(values) == list:
+        values = np.array(values)
+
+    values_encoded = encoder.fit_transform(values)
+
+    onehot_encoder = OneHotEncoder(sparse=False)
+    values_encoded = values_encoded.reshape(len(values_encoded), 1)
+    one_hot_encoded = onehot_encoder.fit_transform(values_encoded)
+
+    return one_hot_encoded, encoder

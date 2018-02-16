@@ -1,6 +1,6 @@
 import pickle
 from os import path
-from datasets.utils import BASE_DIR, MyBidict, SiteInfo
+from datasets.utils import BASE_DIR, MyBidict, SiteInfo, one_hot_conversion
 import pandas as pd
 from collections import OrderedDict
 from bidict import bidict
@@ -44,19 +44,6 @@ def setup_norm(type="softlog"):
         def normalize(dataframe):
             return identity(dataframe)
     return normalize
-
-def one_hot_conversion(values):
-    encoder = LabelEncoder()
-    if type(values) == list:
-        values = array(values)
-
-    values_encoded = encoder.fit_transform(values)
-
-    onehot_encoder = OneHotEncoder(sparse=False)
-    values_encoded = values_encoded.reshape(len(values_encoded), 1)
-    one_hot_encoded = onehot_encoder.fit_transform(values_encoded)
-
-    return one_hot_encoded, encoder
 
 
 def read_costituents():
@@ -184,7 +171,7 @@ def compute_top_correlated(sites_attribute, top_k):
 
 
 
-def generate_embedding(sites_normalized_df, sites_attribute, sites_correlation, days_onehot, tz_onehot=None, example_len=10):
+def generate_embedding(sites_df, sites_attribute, sites_correlation, days_onehot, tz_onehot=None, seq_len=10, features_len=35, top_k=4):
     """
     generate the embeddings of the different timeseries:
     1) convert the attribute in a feature vector
@@ -197,70 +184,72 @@ def generate_embedding(sites_normalized_df, sites_attribute, sites_correlation, 
     :param example_len: example length
     :return:
     """
-    site_id_to_idx = bidict()
+    site_to_id = bidict()
     site_id_to_exp_idx = MyBidict()
+    num_exp = (sites_df.shape[0] - 1) // seq_len
 
     # format sites attribute
     sites_attribute, sector_encoder, tz_encoder = convert_attribute(sites_attribute)
 
-    # resample by each day
-    input_embeddings = []
-    target_embeddings = []
-    neighbor_embeddings = []
 
     for site in sorted(sites_attribute.keys()):
-        start_len = len(input_embeddings)
+        site_to_id[site] = len(site_to_id) + 1
 
-        # extract the needed timeseries
+    # resample by each day
+    input_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), seq_len, features_len).zero_()
+    target_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), seq_len, 1).zero_()
+    neighbor_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), top_k,  seq_len, features_len).zero_()
+
+    for site, site_id in site_to_id.items():
+        site_df = sites_df.loc[:, pd.IndexSlice[site]]
+
+        idx = site_df.iloc[:(num_exp * seq_len)].index.values
+        t_idx = site_df.iloc[1:(num_exp * seq_len) + 1].index.values
+
+        # concate time series
         if tz_onehot is not None:
-            site_normalized_df = torch.from_numpy(
-                pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[site, ["value", "estimated"]]], days_onehot, tz_onehot],
-                          axis=1).values).float()
+            site_df = pd.concat([site_df, days_onehot, tz_onehot], axis=1)
         else:
-            site_normalized_df = torch.from_numpy(
-                pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[site, ["value", "estimated"]]], days_onehot], axis=1).values).float()
+            site_df = pd.concat([site_df, days_onehot], axis=1)
 
         # extract the needed attribute
-        att_site = torch.FloatTensor(sites_attribute[site])
+        att_site = torch.FloatTensor(sites_attribute[site]).unsqueeze(0).expand(idx.shape[0], -1)
+
+        # extract datapoints base on idx
+        in_embeddig = torch.from_numpy(site_df.loc[idx].values).float()
+        ta_embedding = torch.from_numpy(site_df.loc[t_idx]["value"].values).float()
+
+
 
         # concat att and ts embeddings
-        tf_embedding = torch.cat((site_normalized_df, att_site.unsqueeze(0).expand(site_normalized_df.size(0), -1)), dim=1)
-
-        # compute the number of examples
-        num_example = ((tf_embedding.size(0) - 1) // example_len)
+        tf_embedding = torch.cat((in_embeddig, att_site), dim=1)
 
         # split the timseries
-        input_embedding = torch.split(tf_embedding[:num_example * example_len], example_len)
-        target_embedding = torch.split(tf_embedding[1:(num_example * example_len) + 1, 0], example_len)
+        input_embeddings[site_id*num_exp:(site_id + 1) * num_exp] = tf_embedding.view(num_exp, seq_len, -1)
+        target_embeddings[site_id*num_exp:(site_id + 1) * num_exp] = ta_embedding.view(num_exp, seq_len, 1)
         # extract neighbors ts
-        n_embeddings = []
-        for n_site in sites_correlation[site]:
+        n_embeddings = torch.FloatTensor(top_k, num_exp * seq_len, features_len).zero_()
+        for n_idx, n_site in enumerate(sites_correlation[site]):
             # extract neighbors timeseries
             if tz_onehot is not None:
                 n_site_df = torch.from_numpy(
-                    pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[n_site, ["value", "estimated"]]], days_onehot, tz_onehot],
+                    pd.concat([sites_df.loc[idx, pd.IndexSlice[n_site]], days_onehot.loc[idx], tz_onehot.loc[idx]],
                               axis=1).values).float()
             else:
                 n_site_df = torch.from_numpy(
-                    pd.concat([sites_normalized_df.loc[:, pd.IndexSlice[n_site, ["value", "estimated"]]], days_onehot],
-                              axis=1).values).float()
+                    pd.concat([site_df.loc[idx, pd.IndexSlice[n_site]], days_onehot.loc[idx]], axis=1).values).float()
 
-            n_att_site = torch.FloatTensor(sites_attribute[n_site])
+            n_att_site = torch.FloatTensor(sites_attribute[n_site]).unsqueeze(0).expand(idx.shape[0], -1)
 
             # generate neighbor embedding for the current day
-            n_embedding = torch.cat((n_site_df, n_att_site.unsqueeze(0).expand(n_site_df.size(0), -1)), dim=1)
-            n_embedding = n_embedding[:num_example * example_len]
-            n_embeddings.append(n_embedding)
+            n_embeddings[n_idx] = torch.cat((n_site_df, n_att_site), dim=1)
 
-        input_embeddings.extend(input_embedding)
-        target_embeddings.extend(target_embedding)
-        neighbor_embeddings.extend(torch.split(torch.stack(n_embeddings), example_len, dim=1))
-        site_id_to_exp_idx[site] = list(range(start_len, len(input_embeddings)))
-        site_id_to_idx[site] = len(site_id_to_idx)
+        neighbor_embeddings[site_id * num_exp:(site_id + 1) * num_exp] = torch.stack(torch.split(n_embeddings, seq_len, dim=1), dim=0)
+        site_id_to_exp_idx[site_id] = list(range(site_id * num_exp, (site_id + 1) * num_exp))
 
-    return torch.stack(input_embeddings), torch.stack(target_embeddings), torch.stack(neighbor_embeddings).squeeze(), site_id_to_idx, site_id_to_exp_idx
+    return input_embeddings, target_embeddings, neighbor_embeddings, site_to_id, site_id_to_exp_idx
 
-def split_training_test_dataset(site_to_exp_idx):
+def split_training_test_dataset(site_to_idx, site_to_exp_idx):
     """
     split the dataset in training/testing/eval dataset
     :param stock_ids: id of each site
@@ -274,13 +263,13 @@ def split_training_test_dataset(site_to_exp_idx):
     train_dataset = []
 
     for site_id in TRAIN:
-        train_dataset.extend(site_to_exp_idx.d[site_id])
+        train_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
 
     for site_id in EVAL:
-        eval_dataset.extend(site_to_exp_idx.d[site_id])
+        eval_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
 
     for site_id in TEST:
-        test_dataset.extend(site_to_exp_idx.d[site_id])
+        test_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
 
     print("train len: {}\neval len: {}\ntest len: {}".format(len(train_dataset), len(eval_dataset), len(test_dataset)))
 
@@ -311,7 +300,7 @@ if __name__ == "__main__":
                                                                                                                 sites_correlation,
                                                                                                                 days_onehot,
                                                                                                                 tz_onehot,
-                                                                                                                example_len=16)
+                                                                                                                seq_len=16)
 
     pickle.dump(input_embeddings, open(path.join(BASE_DIR, "utility", "input_embeddings.bin"), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, "utility", "target_embeddings.bin"), "wb"))
@@ -320,7 +309,7 @@ if __name__ == "__main__":
     pickle.dump((site_to_exp_idx), open(path.join(BASE_DIR, "utility", "site_to_exp_idx.bin"), "wb"))
 
 
-    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(site_to_exp_idx)
+    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(site_to_idx, site_to_exp_idx)
 
     pickle.dump(train_dataset, open(path.join(BASE_DIR, "utility", "train_dataset.bin"), "wb"))
     pickle.dump(eval_dataset, open(path.join(BASE_DIR, "utility", "eval_dataset.bin"), "wb"))
