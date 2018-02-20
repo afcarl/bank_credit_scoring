@@ -255,6 +255,42 @@ class CustomDataset(Dataset):
         c_idx = self.customers_list[idx]
         return c_idx
 
+class LayerNormalization(torch.nn.Module):
+    ''' Layer normalization module '''
+
+    def __init__(self, d_hid, eps=1e-3):
+        super(LayerNormalization, self).__init__()
+
+        self.eps = eps
+        self.a_2 = torch.nn.Parameter(torch.zeros(d_hid), requires_grad=True)
+        self.b_2 = torch.nn.Parameter(torch.zeros(d_hid), requires_grad=True)
+
+    def forward(self, z):
+        if z.size(1) == 1:
+            return z
+
+        mu = torch.mean(z, keepdim=True, dim=-1)
+        sigma = torch.std(z, keepdim=True, dim=-1)
+        ln_out = (z - mu.expand_as(z)) / (sigma.expand_as(z) + self.eps)
+        ln_out = ln_out * self.a_2.expand_as(ln_out) + self.b_2.expand_as(ln_out)
+
+        return ln_out
+
+class BiLinearProjection(torch.nn.Module):
+    def __init__(self, in_out_dim, baias_size, transpose=True):
+        super(BiLinearProjection, self).__init__()
+        self.W = torch.nn.Parameter(TENSOR_TYPE["f_tensor"](in_out_dim, in_out_dim))
+        self.transpose = transpose
+        if baias_size > 0:
+            self.b = torch.nn.Parameter(TENSOR_TYPE["f_tensor"](baias_size))
+
+    def forward(self, node, neighbor):
+        output = node.matmul(self.W)
+        if self.transpose:
+            output = output.matmul(neighbor.transpose(1, 2))
+        else:
+            output = output.matmul(neighbor)
+        return output + self.b
 
 class BaseNet(torch.nn.Module):
     def __init__(self):

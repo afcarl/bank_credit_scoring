@@ -8,10 +8,12 @@ import collections
 import plotly.plotly as py
 import plotly.tools as tls
 import copy
-from functools import reduce
+import numpy as np
+np.set_printoptions(precision=6, suppress=True, linewidth=200)
+torch.set_printoptions(precision=6)
 BASE_DIR = "../../data"
-DATASET = "sintetic"
-MODEL = "TestNet_NetAttention"
+DATASET = "stock"
+MODEL = "Jordan_RNN_FeatureJointAttention"
 
 
 
@@ -42,45 +44,23 @@ def __reformat_duplicates__(a):
             c = 0
             for idx, val in enumerate(a):
                 if val == item:
-                    a[idx] = val + str(c)
+                    a[idx] = val + "." + str(c)
                     c += 1
 
     return a
 
 
-def plot_time_attention(weights, data, title, id, colorscale="Viridis"):
-    # programmers = ['Alex', 'Nicole', 'Sara', 'Etienne', 'Chelsea', 'Jody', 'Marianne']
-    #
-    # base = datetime.datetime.today()
-    # date_list = [base - datetime.timedelta(days=x) for x in range(0, 180)]
-    #
-    # z = []
-    #
-    # for prgmr in programmers:
-    #     new_row = []
-    #     for date in date_list:
-    #         new_row.append(np.random.poisson())
-    #     z.append(list(new_row))
-    #
-    # data = [
-    #     go.Heatmap(
-    #         z=z,
-    #         x=date_list,
-    #         y=programmers,
-    #         colorscale='Viridis',
-    #     )
-    # ]
+def plot_time_attention(weights, neighbors_id, title, id, colorscale="Viridis"):
 
-    row_name = list(map(lambda x: str(x)[:3], data[0].numpy().tolist()))
-    row_val = __reformat_duplicates__(copy.copy(row_name))
-    col_name = fn_flatten([list(map(lambda x: str(x)[:3], data[i].numpy().tolist())) for i in range(data.size(0))])
+    row_name = list(range(1, 11))
+    col_name = fn_flatten([[str(neighbor_id)]*11 for neighbor_id in neighbors_id])
     col_val = __reformat_duplicates__(copy.copy(col_name))
-    print(len(col_val))
+
     plot_data = [
         go.Heatmap(
-            z=weights,
+            z=weights.view(len(row_name), -1),
             x=col_val,
-            y=row_val,
+            y=row_name,
             colorscale=colorscale,
         )
     ]
@@ -101,7 +81,7 @@ def plot_time_attention(weights, data, title, id, colorscale="Viridis"):
         yaxis=dict(
             type="category",
             tickmode="array",
-            tickvals=row_val,
+            tickvals=row_name,
             ticktext=row_name,
             title='Node input',
             autotick=False,
@@ -226,11 +206,22 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "weight_reg_adagrad_saved_eval_iter_8.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "adagrad_saved_test_drop_0.0.bin"), "rb"))
+    site_id_to_exp_id = pickle.load(open(path_join(BASE_DIR, DATASET, "symbol_id_to_exp_id.bin"), "rb"))
+    sites_correlation = pickle.load(open(path_join(BASE_DIR, DATASET, "neighbors.bin"), "rb"))
+    site_to_idx = pickle.load(open(path_join(BASE_DIR, DATASET,  "symbol_to_id.bin"), "rb"))
+    prev_site = 0
+
     for example_id, example in examples.items():
-        print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        # plot_heatmap(example["weights"].sum(1), "net_weight", id=example_id)
+        site_id = site_id_to_exp_id.inverse[example["id"]][0]
+        site = site_to_idx.inv[site_id]
+        if prev_site == site:
+            continue
+        prev_site = site
 
-
-        plot_time_attention(example["weights"]/4, torch.cat((example["input"].t(), example["neighbors"]), dim=0), "time_weight", id=example_id)
+        print("idx:{}\ntarget:{}\npredicted:{}".format(example["id"], example["target"], example["predict"]))
+        print("site:{}\tneighbors:{}".format(site, sites_correlation[site]))
+        print(example["input"][:, 0])
+        print(example["neighbors"][:, :, 0].t())
+        # print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
+        plot_time_attention(example["weights"], [site, *sites_correlation[site]], "time_weight", id=example_id)

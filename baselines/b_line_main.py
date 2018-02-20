@@ -27,8 +27,8 @@ config = {
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "stock"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "sintetic"), help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
@@ -37,8 +37,8 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=5, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
+    parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     args = __pars_args__()
 
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
+    model = NodeInterpolation(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
                                                  dropout_prob=args.drop_prob)
     model.reset_parameters()
 

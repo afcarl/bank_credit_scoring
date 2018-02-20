@@ -56,7 +56,7 @@ def generate_noise_embedding(dim, num_neighbors, offset_sampler = torch.distribu
     for idx in range(input_embeddings.size(0)):
         n_embedding = torch.FloatTensor(num_neighbors, dim[1], 1).zero_()
         n_embedding[0] = input_embeddings[idx]
-        n_embedding[-1] = torch.FloatTensor(dim[1], 1).uniform_(-20, -10)
+        n_embedding[-1] = torch.FloatTensor(dim[1], 1).uniform_(0, 10)
         n_embedding[1:-1] = input_embeddings[idx].repeat(2, 1, 1) + offset_sampler.sample(sample_shape=(2, 1, 1)).float()
         neighbor_embeddings[idx] = n_embedding.int().float()
         target_embeddings[idx] = torch.sum(torch.cat((input_embeddings[idx].unsqueeze(0), n_embedding[:-1]), dim=0), dim=0)

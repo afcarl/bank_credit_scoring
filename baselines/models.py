@@ -22,10 +22,13 @@ class SimpleGRU(BaseNet):
         self.rnn = nn.GRU(input_dim, hidden_dim,
                           num_layers=nlayers,
                           batch_first=True)
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
-        self.drop = nn.Dropout(dropout_prob)
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
+        #                          nn.Tanh(),
+        #                          nn.Dropout(dropout_prob),
+        #                          nn.Linear(hidden_dim // 2, output_dim))
+
 
 
     def forward(self, input_sequence, hidden, b_neighbors_sequence, neighbor_hidden,
@@ -37,7 +40,6 @@ class SimpleGRU(BaseNet):
         :return:
         """
         output, hidden = self.rnn(input_sequence, hidden)
-        output = self.drop(output)
         output = self.prj(output)
         return output
 
@@ -51,10 +53,7 @@ class StructuralRNN(BaseNet):
         self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
 
         self.name = "StructuralRNN"
-
-        self.dropout = nn.Dropout(dropout_prob)
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -90,7 +89,6 @@ class StructuralRNN(BaseNet):
         neighbors_output = torch.sum(neighbors_output, dim=1)
 
         output, node_hidden = self.NodeRNN(torch.cat((node_input, neighbors_output), dim=-1), node_hidden)
-        output = self.dropout(output)
         output = self.prj(output)
         # output = torch.sum(output.view(self.batch_size, self.max_neighbors+1, -1), dim=1)
         return output
@@ -98,18 +96,13 @@ class StructuralRNN(BaseNet):
 class NodeNeighborsInterpolation(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, n_timestemps, dropout_prob=0.1):
         super(NodeNeighborsInterpolation, self).__init__()
-        self.node_prj = nn.Sequential(nn.Linear(input_dim + hidden_dim, hidden_dim),
-                                      nn.Dropout(dropout_prob),
-                                      nn.Tanh())
+        self.node_prj = nn.Linear(input_dim + hidden_dim, hidden_dim)
 
-        self.neight_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
-                                      nn.Dropout(dropout_prob)
-                                        ,nn.Tanh())
+        self.neight_prj = nn.Linear(input_dim, hidden_dim)
 
 
         self.name = "NodeNeighborsInterpolation"
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -134,13 +127,10 @@ class NodeNeighborsInterpolation(BaseNet):
 class NodeInterpolation(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, n_timestemps, dropout_prob=0.1):
         super(NodeInterpolation, self).__init__()
-        self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
-                                      nn.Dropout(dropout_prob),
-                                      nn.Tanh())
+        self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim))
 
         self.name = "NodeInterpolation"
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim

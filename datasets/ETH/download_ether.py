@@ -32,5 +32,6 @@ for market in MARKETS:
         num_row, time = get_data(dfs, time)
 
     data = pd.concat(dfs).sort_index().drop_duplicates("time")
-    data.to_csv(ensure_dir(path_join("./data", "{}_minute.csv".format(market))))
+    data = data.drop('time', axis=1)
+    data.to_csv(ensure_dir(path_join("../../data", "ETH", "csvs", "{}_minute.csv".format(market))))
     print("\tdownloaded")
