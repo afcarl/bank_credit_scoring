@@ -37,6 +37,13 @@ TENSOR_TYPE = dict(f_tensor=torch.cuda.FloatTensor if use_cuda else torch.FloatT
 
 
 
+def hookFunc(module, gradInput, gradOutput):
+    if np.isnan(gradInput[0].data.numpy()).any():
+        print(gradInput[0])
+    if np.isnan(gradOutput[0].data.numpy()).any():
+        print(gradOutput[0])
+
+
 def get_attn_mask(size, use_cuda, time_size=10):
     ''' Get an attention mask to avoid using the subsequent info.'''
     batch_size, neighbors, time_steps, hidden_dim = size
@@ -255,26 +262,19 @@ class CustomDataset(Dataset):
         c_idx = self.customers_list[idx]
         return c_idx
 
-class LayerNormalization(torch.nn.Module):
-    ''' Layer normalization module '''
+class LayerNorm(torch.nn.Module):
 
-    def __init__(self, d_hid, eps=1e-3):
-        super(LayerNormalization, self).__init__()
-
+    def __init__(self, features, eps=1e-6):
+        super().__init__()
+        self.gamma = torch.nn.Parameter(torch.ones(features))
+        self.beta = torch.nn.Parameter(torch.zeros(features))
         self.eps = eps
-        self.a_2 = torch.nn.Parameter(torch.zeros(d_hid), requires_grad=True)
-        self.b_2 = torch.nn.Parameter(torch.zeros(d_hid), requires_grad=True)
 
-    def forward(self, z):
-        if z.size(1) == 1:
-            return z
-
-        mu = torch.mean(z, keepdim=True, dim=-1)
-        sigma = torch.std(z, keepdim=True, dim=-1)
-        ln_out = (z - mu.expand_as(z)) / (sigma.expand_as(z) + self.eps)
-        ln_out = ln_out * self.a_2.expand_as(ln_out) + self.b_2.expand_as(ln_out)
-
-        return ln_out
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        ret = ((self.gamma / (std + self.eps)) * (x - mean)) + self.beta
+        return ret
 
 class BiLinearProjection(torch.nn.Module):
     def __init__(self, in_out_dim, baias_size, transpose=True):

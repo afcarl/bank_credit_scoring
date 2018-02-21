@@ -11,7 +11,7 @@ import copy
 from functools import reduce
 BASE_DIR = "../../data"
 DATASET = "sintetic"
-MODEL = "TestNet_NetAttention"
+MODEL = "TestNet_TransformerAttention"
 
 
 
@@ -226,7 +226,7 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "weight_reg_adagrad_saved_eval_iter_8.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "adagrad_saved_test_drop_0.0.bin"), "rb"))
     for example_id, example in examples.items():
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
         print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))

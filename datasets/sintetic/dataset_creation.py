@@ -27,7 +27,7 @@ def generate_to_test(dim, num_neighbors):
 
 def generate_triangular_embedding(dim, num_neighbors):
     amplitudes = torch.Tensor(dim[0]).uniform_(5, 10).int().float()
-    split_points = torch.Tensor(dim[0]).uniform_(0, 7).int()
+    split_points = torch.Tensor(dim[0]).uniform_(0, 2).int()
     input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).zero_()
     neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
     target_embeddings = torch.FloatTensor(dim[0], dim[1], 1).zero_()
@@ -147,7 +147,7 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_noise_embedding((10000, 10), 4)
+    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_triangular_embedding((10000, 10), 4)
 
     pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.bin")), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, prefix+"_target_embeddings.bin"), "wb"))

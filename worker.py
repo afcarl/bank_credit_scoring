@@ -65,9 +65,15 @@ def train_fn(model, optimizer, dataloader, args, input_embeddings, target_embedd
         predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, b_seq_len, node_hidden, neighbor_hidden, b_target_sequence)
         loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
 
+        # print(model.attention.layer_norm.gamma.data)
+        # print(model.attention.layer_norm.beta.data)
+
         loss.backward()
         nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
         optimizer.step()
+
+        # print(model.attention.layer_norm.gamma.data)
+        # print(model.attention.layer_norm.beta.data)
 
         iter_loss += loss.data[0]
         # iter_penal += penal.data

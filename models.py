@@ -1,9 +1,9 @@
 import torch
-from helper import rmse, TIMESTAMP, get_attn_mask, get_temperature, BaseNet, TENSOR_TYPE
+from helper import rmse, TIMESTAMP, get_attn_mask, get_temperature, BaseNet, TENSOR_TYPE, hookFunc
 from torch.autograd import Variable
 import torch.nn as nn
 from attention_moduls import TimeAttention, SingleHeadAttention, FeatureSingleHeadAttention, FeatureTransformerLayer, NetAttention, TransformerLayer
-
+import numpy as np
 
 
 
@@ -24,6 +24,13 @@ class TestNetAttention(BaseNet):
         self.time_steps = time_steps
         self.max_neighbors = max_neighbors
 
+    def reset_parameters(self):
+        for p in self.parameters():
+            if len(p.data.shape) == 1:
+                p.data.fill_(0)
+            else:
+                torch.nn.init.xavier_uniform(p.data)
+        self.attention.layer_norm.gamma.data.fill_(1)
 
     def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
         """
@@ -98,7 +105,6 @@ class TestTimeAttention(BaseNet):
         return output, node_hidden, neighbors_hidden, time_weights.cpu()
 
 
-
 class TranslatorJointAttention(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, n_head, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1, temperature=1):
         super(TranslatorJointAttention, self).__init__()
@@ -107,6 +113,11 @@ class TranslatorJointAttention(BaseNet):
         self.neight_prj = nn.Linear(input_dim, hidden_dim)
         self.attention = TransformerLayer(n_head, hidden_dim, max_neighbors, time_steps, temperature=temperature, dropout=dropout_prob)
         self.proj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+
+
+        self.proj.register_backward_hook(hookFunc)
+        self.node_prj.register_backward_hook(hookFunc)
+        self.neight_prj.register_backward_hook(hookFunc)
 
         self.name = "Translator" + self.attention.name
         self.input_dim = input_dim
@@ -122,7 +133,7 @@ class TranslatorJointAttention(BaseNet):
 
 
 
-    def forward(self, node_input, neighbors_input, s_len, gru_hidden, neighbors_hidden, target):
+    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
         self.batch_size = node_input.size(0)
         self.use_cuda = next(self.parameters()).is_cuda
 
@@ -140,8 +151,8 @@ class TranslatorJointAttention(BaseNet):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                torch.nn.init.xavier_normal(p.data)
-        self.attention.layer_norm.a_2.data.fill_(1)
+                torch.nn.init.xavier_uniform(p.data)
+        self.attention.layer_norm.gamma.data.fill_(1)
         # self.attention.pos_ffn.layer_norm.a_2.data.fill_(1)
 
 
@@ -205,8 +216,8 @@ class RNNJointAttention(BaseNet):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                torch.nn.init.xavier_normal(p.data)
-        self.attention.layer_norm.a_2.data.fill_(1)
+                torch.nn.init.xavier_uniform(p.data)
+        self.attention.layer_norm.gamma.data.fill_(1)
 
 class JordanRNNJointAttention(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, n_head, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1, temperature=1):
@@ -255,7 +266,7 @@ class JordanRNNJointAttention(BaseNet):
         neighbors_output = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim).zero_())
         outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 1).zero_())
         conditional_outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 3).zero_())
-        attentions = TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, self.max_neighbors+1, self.time_steps).zero_()
+        attentions = TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, (self.max_neighbors+1) * self.time_steps).zero_()
 
         atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
 
@@ -270,11 +281,11 @@ class JordanRNNJointAttention(BaseNet):
             neighbors_output[:, :, i] = neighbors_hidden.contiguous().view(self.batch_size, self.max_neighbors, self.hidden_dim) # reshape to normal dim
 
 
-            output, attention = self.attention(node_output, neighbors_output, i, atten_mask[:, i])
+            output, attention = self.attention(node_output, neighbors_output, i, atten_mask)
 
             output = self.prj(output)
             outputs[:, i] = output
-            attentions[:, i] = attention
+            attentions[:, i] = attention.squeeze()
 
             upper_bound = i+1
             lower_bound = i-2 if i >= 3 else 0
@@ -291,8 +302,8 @@ class JordanRNNJointAttention(BaseNet):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                torch.nn.init.xavier_normal(p.data)
-        self.attention.layer_norm.a_2.data.fill_(1)
+                torch.nn.init.xavier_uniform(p.data)
+        self.attention.layer_norm.gamma.data.fill_(1)
 
     def init_hidden(self, batch_size):
         """

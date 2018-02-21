@@ -1,4 +1,4 @@
-from helper import CustomDataset, get_embeddings, RiskToTensor, AttributeToTensor, ensure_dir
+from helper import CustomDataset, get_embeddings, RiskToTensor, AttributeToTensor, ensure_dir, hookFunc
 from worker import train_fn, eval_fn
 from os.path import join as path_join
 from torch.utils.data import DataLoader
@@ -26,7 +26,7 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
@@ -42,7 +42,7 @@ def __pars_args__():
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
-    parser.add_argument('--temp', type=float, default=0.2, help="Softmax temperature")
+    parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
     parser.add_argument('--n_head', type=int, default=4, help="attention head number")
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
@@ -60,7 +60,7 @@ def __pars_args__():
 if __name__ == "__main__":
     args = __pars_args__()
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = RNNJointAttention(args.input_dim, args.hidden_size, args.output_size, args.n_head, args.num_layers,
+    model = TestNetAttention(args.input_dim, args.hidden_size, args.output_size, args.n_head, args.num_layers,
                                     args.max_neighbors, input_embeddings.size(1), args.time_windows,
                                     dropout_prob=args.drop_prob,
                                     temperature=args.temp)
@@ -82,7 +82,6 @@ if __name__ == "__main__":
 
     model.reset_parameters()
     optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
-
 
 
 

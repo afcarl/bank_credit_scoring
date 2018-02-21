@@ -28,7 +28,7 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     args = __pars_args__()
 
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = NodeInterpolation(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
+    model = NodeNeighborsInterpolation(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
                                                  dropout_prob=args.drop_prob)
     model.reset_parameters()
 

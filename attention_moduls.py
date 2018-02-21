@@ -2,7 +2,7 @@ from torch import nn
 import torch
 import torch.nn.init as init
 
-from helper import get_temperature, TENSOR_TYPE, LayerNormalization, BiLinearProjection
+from helper import get_temperature, TENSOR_TYPE, LayerNorm, BiLinearProjection, hookFunc
 
 
 class MultiHeadAttention(nn.Module):
@@ -20,19 +20,21 @@ class MultiHeadAttention(nn.Module):
         self.prj = nn.Linear(hidden_dim * n_head, hidden_dim)
 
 
+
     def forward(self, q, k, v, batch_size, attn_mask=None):
         S = torch.bmm(q, k.transpose(1, 2))
 
         if attn_mask is not None:
             S.data.masked_fill_(attn_mask.repeat(self.n_head, 1, self.max_neighbors + 1), -float('inf'))
 
-        # S /= (self.temperature * (self.hidden_dim ** 0.5))
-        S /= self.temperature
+        S /= (self.temperature * (self.hidden_dim ** 0.5))
+        # S /= self.temperature
         A = self.softmax(S)
         output = torch.bmm(A, v)
         output = torch.cat(torch.split(output, batch_size, dim=0), dim=-1)
         output = self.dropout(output)
         output = self.prj(output)
+        self.att_m = output
         return output, torch.stack(torch.split(A.data, batch_size, dim=0), dim=0).sum(0)
 
 
@@ -52,24 +54,19 @@ class FeatureMultiHeadAttention(nn.Module):
         self.prj = nn.Linear(hidden_dim * n_head, hidden_dim)
 
 
-    def forward(self, q, k, v, current_time_step, attn_mask=None):
-        self.batch_size = q.size(0) // (self.n_head * (self.max_neighbors + 1))
+    def forward(self, q, k, v, batch_size, attn_mask=None):
         S = torch.bmm(q, k.transpose(1, 2))
 
-        S = torch.cat(
-            torch.split(torch.stack(torch.split(S, self.batch_size * (self.max_neighbors + 1), dim=0), dim=0), self.batch_size, dim=1),
-            dim=-1)
-        S = S[:, :, current_time_step]
-
         if attn_mask is not None:
-            S.data.masked_fill_(attn_mask.unsqueeze(0).repeat(self.n_head, 1, self.max_neighbors + 1), -float('inf'))
+            S.data.masked_fill_(attn_mask.unsqueeze(1).repeat(self.n_head, 1, self.max_neighbors+1), -float('inf'))
 
         S /= (self.temperature * (self.hidden_dim ** 0.5))
         A = self.softmax(S)
-        A = self.dropout(A)
-        output = torch.bmm(torch.cat(torch.split(A, 1, dim=0), dim=1).transpose(0, 1), v)
-        output = torch.cat(torch.split(output.squeeze(), self.batch_size, dim=0), dim=-1)
-        return self.prj(output), torch.stack(torch.split(A.data, self.time_steps, dim=-1), dim=2).sum(dim=0)
+        output = torch.bmm(A, v).squeeze()
+        output = torch.cat(torch.split(output, batch_size, dim=0), dim=-1)
+        output = self.dropout(output)
+        output = self.prj(output)
+        return output, torch.stack(torch.split(A.data, batch_size, dim=0), dim=0).sum(0)
 
 
 class TransformerLayer(nn.Module):
@@ -87,7 +84,10 @@ class TransformerLayer(nn.Module):
         self.w_vs = nn.Parameter(torch.FloatTensor(n_head, hidden_dim, hidden_dim))
 
         self.slf_attn = MultiHeadAttention(n_head, hidden_dim, max_neighbors, time_steps, temperature=temperature, dropout=dropout)
-        self.layer_norm = LayerNormalization(hidden_dim)
+        self.layer_norm = LayerNorm(hidden_dim)
+
+        self.slf_attn.register_backward_hook(hookFunc)
+        self.layer_norm.register_backward_hook(hookFunc)
 
 
 
@@ -108,6 +108,7 @@ class TransformerLayer(nn.Module):
 
 
         output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask)
+        # output = output + node_enc
         output = self.layer_norm(output + node_enc)
         # output = self.pos_ffn(output)
 
@@ -131,29 +132,29 @@ class FeatureTransformerLayer(nn.Module):
         self.w_vs = nn.Parameter(torch.FloatTensor(n_head, hidden_dim, hidden_dim))
 
         self.slf_attn = FeatureMultiHeadAttention(n_head, hidden_dim, max_neighbors, time_steps, temperature=temperature, dropout=dropout)
-        self.layer_norm = LayerNormalization(hidden_dim)
+        self.layer_norm = LayerNorm(hidden_dim)
 
 
 
 
     def forward(self, node_enc, neigh_enc, current_time_step, attn_mask=None):
-        self.batch_size = node_enc.size(0)
+        batch_size = node_enc.size(0)
 
-        q = node_enc.repeat(self.max_neighbors + 1, 1, 1)
-        k = torch.cat((node_enc, torch.cat(torch.split(neigh_enc, 1, dim=1), dim=0).squeeze()), dim=0)
-        v = torch.cat((node_enc.unsqueeze(1), neigh_enc), dim=1).view(self.batch_size, -1, self.hidden_dim)
+        q = node_enc[:, current_time_step].unsqueeze(1)
+        k = torch.cat((node_enc, torch.cat(torch.split(neigh_enc, 1, dim=1), dim=2).squeeze()), dim=1)
+        v = torch.cat((node_enc, torch.cat(torch.split(neigh_enc, 1, dim=1), dim=2).squeeze()), dim=1)
 
         q_s = q.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.hidden_dim)  # n_head x (mb_size*len_q) x d_model
         k_s = k.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.hidden_dim)  # n_head x (mb_size*len_k) x d_model
         v_s = v.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.hidden_dim)  # n_head x (mb_size*len_v) x d_model
 
-        q_s = torch.bmm(q_s, self.w_qs).view(-1, self.time_steps, self.hidden_dim)  # (n_head*mb_size*max_neighbors+1) x seq_le x hidden_dim
-        k_s = torch.bmm(k_s, self.w_ks).view(-1, self.time_steps, self.hidden_dim)  # (n_head*mb_size*max_neighbors+1) x seq_le x hidden_dim
-        v_s = torch.bmm(v_s, self.w_vs).view(self.n_head * self.batch_size, -1,
-                                             self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
+        q_s = torch.bmm(q_s, self.w_qs).view(-1, 1, self.hidden_dim)  # (n_head*mb_size*max_neighbors+1) x seq_le x hidden_dim
+        k_s = torch.bmm(k_s, self.w_ks).view(self.n_head * batch_size, -1,
+                                             self.hidden_dim)  # (n_head*mb_size*max_neighbors+1) x seq_le x hidden_dim
+        v_s = torch.bmm(v_s, self.w_vs).view(self.n_head * batch_size, -1, self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
 
 
-        output, slf_attn = self.slf_attn(q_s, k_s, v_s, current_time_step, attn_mask=attn_mask)
+        output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask[:, current_time_step])
         output = self.layer_norm(output + node_enc[:, current_time_step])
         # output = self.pos_ffn(output)
 
