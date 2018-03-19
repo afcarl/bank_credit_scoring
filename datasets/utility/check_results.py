@@ -13,7 +13,7 @@ np.set_printoptions(precision=6, suppress=True, linewidth=200)
 torch.set_printoptions(precision=6)
 BASE_DIR = "../../data"
 DATASET = "utility"
-MODEL = "Jordan_RNN_FeatureJointAttention"
+MODEL = "TestNet_TransformerAttention"
 
 
 
@@ -58,7 +58,7 @@ def plot_time_attention(weights, neighbors_id, title, id, colorscale="Viridis"):
 
     plot_data = [
         go.Heatmap(
-            z=weights.view(len(row_name), -1),
+            z=weights,
             x=col_val,
             y=row_name,
             colorscale=colorscale,
@@ -206,7 +206,7 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_drop_0.0.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
     site_id_to_exp_id = pickle.load(open(path_join(BASE_DIR, DATASET, "site_to_exp_idx.bin"), "rb"))
     sites_correlation = pickle.load(open(path_join(BASE_DIR, DATASET, "temp", "neighbors.bin"), "rb"))
     site_to_idx = pickle.load(open(path_join(BASE_DIR, DATASET,  "site_to_idx.bin"), "rb"))
@@ -224,4 +224,4 @@ if __name__ == "__main__":
         print(example["input"][:, 0])
         print(example["neighbors"][:, :, 0].t())
         # print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        # plot_time_attention(example["weights"], [site, *sites_correlation[site]], "time_weight", id=example_id)
+        plot_time_attention(example["weights"]/4, [site, *sites_correlation[site]], "time_weight", id=example_id)

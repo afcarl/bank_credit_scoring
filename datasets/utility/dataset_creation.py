@@ -279,12 +279,12 @@ def split_training_test_dataset(site_to_idx, site_to_exp_idx):
 
 if __name__ == "__main__":
     meta_infos, sites_info = read_costituents()
-    sites_normalized_dataframe, days_onehot, tz_onehot = load_data(sites_info)
-
-    pickle.dump(sites_normalized_dataframe, open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "wb"))
-    pickle.dump(days_onehot, open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "wb"))
-    pickle.dump(compute_top_correlated(sites_info, 4), open(path.join(BASE_DIR, "utility", "temp", "neighbors.bin"), "wb"))
-    pickle.dump(tz_onehot, open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "wb"))
+    # sites_normalized_dataframe, days_onehot, tz_onehot = load_data(sites_info)
+    #
+    # pickle.dump(sites_normalized_dataframe, open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "wb"))
+    # pickle.dump(days_onehot, open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "wb"))
+    # pickle.dump(compute_top_correlated(sites_info, 4), open(path.join(BASE_DIR, "utility", "temp", "neighbors.bin"), "wb"))
+    # pickle.dump(tz_onehot, open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "wb"))
     # pickle.dump(start_values, open(path.join(BASE_DIR, "utility", "temp", "start_values.bin"), "wb"))
 
 
@@ -302,11 +302,11 @@ if __name__ == "__main__":
                                                                                                                 tz_onehot,
                                                                                                                 seq_len=16)
 
-    pickle.dump(input_embeddings, open(path.join(BASE_DIR, "utility", "input_embeddings.bin"), "wb"))
-    pickle.dump(target_embeddings, open(path.join(BASE_DIR, "utility", "target_embeddings.bin"), "wb"))
-    pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, "utility", "neighbor_embeddings.bin"), "wb"))
-    pickle.dump((site_to_idx), open(path.join(BASE_DIR, "utility", "site_to_idx.bin"), "wb"))
-    pickle.dump((site_to_exp_idx), open(path.join(BASE_DIR, "utility", "site_to_exp_idx.bin"), "wb"))
+    # pickle.dump(input_embeddings, open(path.join(BASE_DIR, "utility", "input_embeddings.bin"), "wb"))
+    # pickle.dump(target_embeddings, open(path.join(BASE_DIR, "utility", "target_embeddings.bin"), "wb"))
+    # pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, "utility", "neighbor_embeddings.bin"), "wb"))
+    # pickle.dump((site_to_idx), open(path.join(BASE_DIR, "utility", "site_to_idx.bin"), "wb"))
+    # pickle.dump((site_to_exp_idx), open(path.join(BASE_DIR, "utility", "site_to_exp_idx.bin"), "wb"))
 
 
     train_dataset, eval_dataset, test_dataset = split_training_test_dataset(site_to_idx, site_to_exp_idx)

@@ -46,6 +46,28 @@ def generate_triangular_embedding(dim, num_neighbors):
         target_embeddings[idx] = torch.from_numpy(input_embedding[split_point+1:split_point+dim[1]+1])
     return input_embeddings, target_embeddings, neighbor_embeddings, "tr"
 
+def generate_noise_triangular_embedding(dim, num_neighbors):
+    amplitudes = torch.Tensor(dim[0]).uniform_(5, 10).int().float()
+    split_points = torch.Tensor(dim[0]).uniform_(0, 2).int()
+    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).zero_()
+    neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
+    target_embeddings = torch.FloatTensor(dim[0], dim[1], 1).zero_()
+
+    for idx in range(dim[0]):
+        input_embedding = triangle2(2*dim[1], amplitude=amplitudes[idx])
+        input_embedding += np.random.randint(-2, 2, 1)
+        input_embedding = input_embedding.astype(np.int32)
+        split_point = split_points[idx]
+        neighbors_split_offset = split_point + np.random.randint(1, 3)
+        neighbors_multiply_offset = np.random.randint(1, 3, num_neighbors)
+        input_embeddings[idx] = torch.from_numpy(input_embedding[split_point:split_point+dim[1]])
+        n_embedding = np.matmul(np.expand_dims(input_embedding, axis=-1), np.expand_dims(neighbors_multiply_offset, axis=0)).T
+        for n_idx in range(num_neighbors - 2):
+            neighbor_embeddings[idx, n_idx] = torch.from_numpy(n_embedding[n_idx, neighbors_split_offset:neighbors_split_offset+10].astype(np.int32)).float()
+        neighbor_embeddings[idx, -2] = torch.FloatTensor(dim[1], 1).uniform_(-10, 10)
+        target_embeddings[idx] = torch.from_numpy(input_embedding[split_point+1:split_point+dim[1]+1])
+    return input_embeddings, target_embeddings, neighbor_embeddings, "noise_tr"
+
 
 def generate_noise_embedding(dim, num_neighbors, offset_sampler = torch.distributions.Categorical(torch.Tensor([ 0.25, 0.25, 0.25]))):
     input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).uniform_(0, 10).int().float()
@@ -147,7 +169,7 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_triangular_embedding((10000, 10), 4)
+    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_noise_triangular_embedding((12000, 10), 4)
 
     pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.bin")), "wb"))
     pickle.dump(target_embeddings, open(path.join(BASE_DIR, prefix+"_target_embeddings.bin"), "wb"))

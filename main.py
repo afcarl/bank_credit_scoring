@@ -26,7 +26,7 @@ config = {
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
@@ -41,7 +41,7 @@ def __pars_args__():
     parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
-    parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
+    parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
     parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
     parser.add_argument('--n_head', type=int, default=4, help="attention head number")
 
@@ -60,7 +60,7 @@ def __pars_args__():
 if __name__ == "__main__":
     args = __pars_args__()
     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = TestNetAttention(args.input_dim, args.hidden_size, args.output_size, args.n_head, args.num_layers,
+    model = TranslatorJointAttention(args.input_dim, args.hidden_size, args.output_size, args.n_head, args.num_layers,
                                     args.max_neighbors, input_embeddings.size(1), args.time_windows,
                                     dropout_prob=args.drop_prob,
                                     temperature=args.temp)
@@ -119,7 +119,7 @@ if __name__ == "__main__":
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
 
-            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "weight_reg_adagrad_saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
+            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
 
             if best_model > iter_eval:
                 print("save best model")
@@ -134,4 +134,4 @@ if __name__ == "__main__":
     iter_test, saved_weights = eval_fn(model, test_dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, seq_len)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
-        path_join(args.data_dir, model.name, "adagrad_saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))
+        path_join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))

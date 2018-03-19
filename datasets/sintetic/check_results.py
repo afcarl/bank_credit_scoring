@@ -11,7 +11,7 @@ import copy
 from functools import reduce
 BASE_DIR = "../../data"
 DATASET = "sintetic"
-MODEL = "TestNet_TransformerAttention"
+MODEL = "RNN_TransformerAttention"
 
 
 
@@ -226,11 +226,9 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "adagrad_saved_test_drop_0.0.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_eval_iter_10.bin"), "rb"))
     for example_id, example in examples.items():
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
-        # plot_heatmap(example["weights"].sum(1), "net_weight", id=example_id)
-
-
-        plot_time_attention(example["weights"]/4, torch.cat((example["input"].t(), example["neighbors"]), dim=0), "time_weight", id=example_id)
+        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"].t()))
+        # example["weights"][:, -10:] /= 2
+        plot_time_attention((example["weights"]/4) / (example["weights"]/4).sum(dim=-1).unsqueeze(-1).expand(-1, 50), torch.cat((example["input"].t(), example["neighbors"]), dim=0), "time_weight", id=example_id)
