@@ -9,8 +9,6 @@ import random
 import datetime as dt
 import re
 import geopy.distance
-from sklearn.preprocessing import LabelEncoder
-from sklearn.preprocessing import OneHotEncoder
 from numpy import array, arange, exp, log, nan
 
 TRAIN = [6, 8, 25, 29, 44, 45, 55, 78, 9, 12, 13, 41, 88, 99, 100, 101, 103, 109, 111, 116, 136, 281, 285, 304, 339, 341, 363, 366, 391, 399, 690, 716, 765, 648, 654, 673, 674, 697, 703, 718, 731, 737, 742, 887, 767, 808, 32, 42, 14, 137, 236, 22, 56,  31, 36]

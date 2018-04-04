@@ -36,6 +36,11 @@ TENSOR_TYPE = dict(f_tensor=torch.cuda.FloatTensor if use_cuda else torch.FloatT
                    u_tensor=torch.cuda.ByteTensor if use_cuda else torch.ByteTensor)
 
 
+def get_param_numbers(model):
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    return params
+
 
 def hookFunc(module, gradInput, gradOutput):
     if np.isnan(gradInput[0].data.numpy()).any():

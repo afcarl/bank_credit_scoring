@@ -87,9 +87,6 @@ class TransformerLayer(nn.Module):
         self.slf_attn = MultiHeadAttention(n_head, hidden_dim, max_neighbors, time_steps, temperature=temperature, dropout=dropout)
         self.layer_norm = LayerNorm(hidden_dim)
 
-        # self.slf_attn.register_backward_hook(hookFunc)
-        # self.layer_norm.register_backward_hook(hookFunc)
-
 
 
     def forward(self, node_enc, neigh_enc, attn_mask=None):
