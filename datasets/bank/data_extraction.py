@@ -301,47 +301,6 @@ def fix_neighbors(customers_data, customers_neighbors):
 
 
 
-def fix_one_man_company(customers_data, cursor, id_to_fix=ONE_MAN_COMPANY_COSTUMERS):
-    """
-    fix the one man company getting the customer info of its co-owner
-    :param customers_data:
-    :param cursor:
-    :param id_to_fix:
-    :return:
-    """
-    for customer_id in id_to_fix:
-        node_attribute = {}
-        cursor.execute(GET_ALL_CUSTOMER_LINKS_BY_ID.format(customer_id))
-        for row, (customer_link,) in enumerate(cursor.fetchall()):
-            assert row == 0, "multiple customer found {}".format(customer_id)
-            attribute = __get_customer_info__(customer_link, cursor)
-
-        for time_step in customers_data.index:
-            node_attribute[time_step] = attribute
-
-        node_attribute = pd.DataFrame.from_dict(node_attribute, orient="index")
-        assert not node_attribute.isnull().any().any(), "{}\t{}\n{}".format(customer_id, customer_link, node_attribute)
-        print(customers_data.shape)
-        print(customers_data[customer_id].shape)
-        temp_df = pd.concat([customers_data[customer_id], node_attribute], axis=1)
-        temp_df.columns = [[customer_id] * 28, temp_df.columns]
-        temp_df.columns = temp_df.columns.rename(['id', 'attribute'])
-        customers_data = customers_data.drop(customer_id, axis=1, level=0)
-        customers_data = pd.concat([customers_data, temp_df], axis=1)
-
-        print(customers_data[customer_id].shape)
-        print(customers_data.shape)
-    return customers_data
-
-
-
-
-
-
-
-
-
-
 def extract_data(cursor):
 
     # customers_data = get_customers_risk(cursor)

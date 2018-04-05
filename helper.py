@@ -5,7 +5,9 @@ from torch.utils.data import Dataset
 from collections import namedtuple
 import torch
 import pickle
+import msgpack
 import numpy as np
+
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
 
@@ -34,6 +36,16 @@ TENSOR_TYPE = dict(f_tensor=torch.cuda.FloatTensor if use_cuda else torch.FloatT
                    l_tensor=torch.cuda.LongTensor if use_cuda else torch.LongTensor,
                    i_tensor=torch.cuda.IntTensor if use_cuda else torch.IntTensor,
                    u_tensor=torch.cuda.ByteTensor if use_cuda else torch.ByteTensor)
+
+
+def msg_unpack(file_name):
+    with open(file_name, 'rb') as infile:
+        data = msgpack.unpack(infile)
+    return data
+
+def msg_pack(data, file_name):
+    with open(file_name, "wb") as outfile:
+        msgpack.pack(data, outfile)
 
 
 def get_param_numbers(model):
