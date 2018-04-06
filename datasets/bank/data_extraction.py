@@ -319,7 +319,7 @@ def extract_data(cursor):
     # customers_data, customers_neighbors_dict = fix_neighbors(customers_data, customers_neighbors_dict)
 
 
-    customers_data = pd.read_msgpack(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df1.msg"))
+    customers_data = pd.read_msgpack(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg"))
     with open(path.join(BASE_DIR, "temp", "customers_neighbors_dict.msg"), 'rb') as infile:
         customers_neighbors_dict = msgpack.unpack(infile)
 

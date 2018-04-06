@@ -99,7 +99,7 @@ class SimpleFeatureMean(nn.Module):
         5)compute the neighbor difference between inputs and outputs
         6)compute the neighbor difference between outputs and outputs
 
-        :param c_input: customer input
+        :param c_input: customers input
         :param n_input: neighbors input
         :param s_len: sequence length (number of neighbors)
         :return:

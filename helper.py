@@ -222,12 +222,12 @@ def get_customer_embeddings(base_path, file_name, neighbors_file_name, embedding
     generate the embedding.
     1) Read the raw features
     2) Convert the raw features in a vector format
-    3) Write the features of each customer in the appropriate embedding matrix position
+    3) Write the features of each customers in the appropriate embedding matrix position
     4) Extract the target values
     5) Extract the neighbors values
 
     :param base_path: directory containing the data
-    :param file_name: filename containing the customer data
+    :param file_name: filename containing the customers data
     :param neighbors_file_name: file name containing the neighbor data
     :param embedding_dim: dimension of the input embedding
     :param input_ts_len: time length of the input sequence
