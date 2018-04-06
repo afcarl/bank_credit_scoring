@@ -315,9 +315,8 @@ def extract_accordato_massimo(customers_data, cursor):
                                                                             value1=value1,
                                                                             value2=value2)
         accordato_max[customer_id] = pd.DataFrame.from_dict(accordato_max[customer_id], orient="index")
-        if row % 100 == 2:
+        if row % 100 == 0:
             print(row, customer_id)
-            break
     return accordato_max
 
 
