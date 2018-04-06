@@ -210,6 +210,7 @@ def histogram_by_class_by_timestamp(customers_data, attribute="class_scoring_pre
 
 if __name__ == "__main__":
     customers_data = pd.read_msgpack(path.join(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg")))
-    for timestamp in TIMESTAMP:
-        time_step = dt.datetime.strptime(timestamp, "%Y-%m-%d")
-        histogram_by_class_by_timestamp(customers_data.loc[time_step, pd.IndexSlice[:, ["pre_notching", "val_scoring_risk", "class_scoring_risk", "class_scoring_pre"]]])
+
+    # for timestamp in TIMESTAMP:
+    #     time_step = dt.datetime.strptime(timestamp, "%Y-%m-%d")
+    #     histogram_by_class_by_timestamp(customers_data.loc[time_step, pd.IndexSlice[:, ["pre_notching", "val_scoring_risk", "class_scoring_risk", "class_scoring_pre"]]])

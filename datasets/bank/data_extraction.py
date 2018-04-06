@@ -9,7 +9,7 @@ from bidict import bidict
 from datetime import datetime
 import os.path as path
 from itertools import islice
-import msgpack
+import helper
 
 
 BASE_DIR = path.join("..", "..", "data", "customers")
@@ -46,6 +46,7 @@ GET_PAGE_CUSTOMER_LINKS_FOR_RISK_CUSTOMERS = "SELECT DISTINCT cl.customerid, cus
 GET_ALL_RISK_LINKS_BY_CUSTOMERID = "SELECT DISTINCT cl.customerid, cl.customerid_link, cl.cod_link_type,  cl.des_link_type FROM risk AS r, customer_links AS cl WHERE r.customerid = cl.customerid AND r.customerid={}"
 GET_DEFAULT_RISK_CUSTOMER = "SELECT r.customerid, r.date_ref, r.val_scoring_risk, r.class_scoring_risk, r.val_scoring_pre, r.class_scoring_pre, r.val_scoring_ai, r.class_scoring_ai, r.val_scoring_cr, r.class_scoring_cr, r.val_scoring_bi, r.class_scoring_bi, r.val_scoring_sd, r.class_scoring_sd, r.pre_notching  FROM risk AS r  WHERE r.customerid IN (SELECT DISTINCT r1.customerid FROM ml_crif.risk AS r1 WHERE r1.val_scoring_risk=100) ORDER BY r.customerid asc, r.date_ref asc"
 GET_CUSTOMER_BY_ID = "SELECT birthdate, b_partner, cod_uo, zipcode, region, country_code, c.customer_kind, ck.description as kind_desc, c.customer_type, ct.description as type_desc, uncollectible_status, ateco, sae  FROM customers as c, customer_kinds as ck, customer_types as ct WHERE c.customer_kind=ck.customer_kind AND c.customer_type = ct.customer_type AND c.customerid={} LIMIT 0, 1"
+GET_ACCORDATO_TOT_BY_ID = "SELECT date_ref, value1, value2 FROM ml_crif.features where customerid={} and cod_feature='GN0018' and cod_source='OP';"
 
 f_check_none = lambda x: np.nan if x == None else x
 f_parse_date = lambda x: "{}-{}-{}".format(x[6:], x[4:6], x[:4])
@@ -300,6 +301,24 @@ def fix_neighbors(customers_data, customers_neighbors):
     return customers_data, customers_neighbors
 
 
+def extract_accordato_massimo(customers_data, cursor):
+    customers_id = customers_data.columns.get_level_values("id").unique().tolist()
+    accordato_max = {}
+    for row, customer_id in enumerate(customers_id):
+        accordato_max[customer_id] = OrderedDict()
+        cursor.execute(GET_ACCORDATO_TOT_BY_ID.format(customer_id))
+        for date_ref, value1, value2 in cursor.fetchall():
+            date_ref = f_parse_date(date_ref)
+
+            accordato_max[customer_id][f_format_str_date(date_ref)] = dict(date_ref=date_ref,
+                                                                            value1=value1,
+                                                                            value2=value2)
+        if row % 100 == 0:
+            print(row, customer_id)
+    return accordato_max
+
+
+
 
 def extract_data(cursor):
 
@@ -318,13 +337,9 @@ def extract_data(cursor):
     # customers_data = delete_one_man_company(customers_data, customers_neighbors_dict)
     # customers_data, customers_neighbors_dict = fix_neighbors(customers_data, customers_neighbors_dict)
 
-
     customers_data = pd.read_msgpack(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg"))
-    with open(path.join(BASE_DIR, "temp", "customers_neighbors_dict.msg"), 'rb') as infile:
-        customers_neighbors_dict = msgpack.unpack(infile)
-
-    print(customers_data.columns.get_level_values('id').unique().shape[0])
-    print(len(customers_neighbors_dict))
+    accordato_max_dic = extract_accordato_massimo(customers_data, cursor)
+    helper.msg_pack(accordato_max_dic, path.join(BASE_DIR, "temp", "accordato_max_dic.msg"))
 
 
 def extract_neighborhod_risk():
