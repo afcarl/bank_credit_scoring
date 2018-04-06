@@ -106,7 +106,7 @@ def get_customers_risk(cursor):
 
         if row % 100 == 0:
             print(row)
-    customers_data[prev_customer_id] = pd.DataFrame.from_dict(customers_data[prev_customer_id], orient="index")
+        customers_data[prev_customer_id] = pd.DataFrame.from_dict(customers_data[prev_customer_id], orient="index")
     print(len(customers_data))
     pickle.dump(customers_data, open(path.join(BASE_DIR, "temp", "customers_risk_dict.bin"), "wb"))
     return customers_data
@@ -303,8 +303,9 @@ def fix_neighbors(customers_data, customers_neighbors):
 
 def extract_accordato_massimo(customers_data, cursor):
     customers_id = customers_data.columns.get_level_values("id").unique().tolist()
+    print(len(customers_id))
     accordato_max = {}
-    for row, customer_id in enumerate(customers_id):
+    for row, customer_id in enumerate(customers_id[:7046]):
         accordato_max[customer_id] = OrderedDict()
         cursor.execute(GET_ACCORDATO_TOT_BY_ID.format(customer_id))
         for date_ref, value1, value2 in cursor.fetchall():
@@ -313,8 +314,10 @@ def extract_accordato_massimo(customers_data, cursor):
             accordato_max[customer_id][f_format_str_date(date_ref)] = dict(date_ref=date_ref,
                                                                             value1=value1,
                                                                             value2=value2)
-        if row % 100 == 0:
+        accordato_max[customer_id] = pd.DataFrame.from_dict(accordato_max[customer_id], orient="index")
+        if row % 100 == 2:
             print(row, customer_id)
+            break
     return accordato_max
 
 
@@ -339,7 +342,8 @@ def extract_data(cursor):
 
     customers_data = pd.read_msgpack(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg"))
     accordato_max_dic = extract_accordato_massimo(customers_data, cursor)
-    helper.msg_pack(accordato_max_dic, path.join(BASE_DIR, "temp", "accordato_max_dic.msg"))
+    pickle.dump(accordato_max_dic, open(path.join(BASE_DIR, "temp", "accordato_max_dic.bin"), "wb"))
+
 
 
 def extract_neighborhod_risk():

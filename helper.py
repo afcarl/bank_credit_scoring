@@ -44,7 +44,7 @@ def msg_unpack(file_name):
     return data
 
 def msg_pack(data, file_name):
-    with open(file_name, "wb") as outfile:
+    with open(file_name, "w") as outfile:
         msgpack.pack(data, outfile)
 
 
