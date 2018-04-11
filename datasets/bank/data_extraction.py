@@ -4,8 +4,6 @@ from collections import OrderedDict
 import numpy as np
 import visdom
 import pandas as pd
-from itertools import tee
-from bidict import bidict
 from datetime import datetime
 import os.path as path
 from itertools import islice
@@ -305,7 +303,7 @@ def extract_accordato_massimo(customers_data, cursor):
     customers_id = customers_data.columns.get_level_values("id").unique().tolist()
     print(len(customers_id))
     accordato_max = {}
-    for row, customer_id in enumerate(customers_id[:7046]):
+    for row, customer_id in enumerate(customers_id[7046:]):
         accordato_max[customer_id] = OrderedDict()
         cursor.execute(GET_ACCORDATO_TOT_BY_ID.format(customer_id))
         for date_ref, value1, value2 in cursor.fetchall():
