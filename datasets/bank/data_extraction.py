@@ -6,9 +6,9 @@ import visdom
 import pandas as pd
 from datetime import datetime
 import os.path as path
-from itertools import islice
+from itertools import islice, count
 import helper
-
+import networkx as nx
 
 BASE_DIR = path.join("..", "..", "data", "customers")
 
@@ -40,7 +40,7 @@ GET_RISK_USER_BY_ID = "SELECT customerid, date_ref, val_scoring_risk, class_scor
 GET_ALL_CUSTOMER_LINKS_ID = "SELECT DISTINCT * FROM (SELECT c_one.customerid FROM customer_links AS c_one UNION SELECT c2.customerid_link FROM customer_links AS c2) AS u"
 GET_ALL_CUSTOMER_LINKS_BY_ID = "SELECT DISTINCT customerid_link FROM customer_links WHERE customerid={}"
 GET_ALL_CUSTOMER_LINKS_FOR_RISK_CUSTOMERS = "SELECT DISTINCT cl.customerid, customerid_link FROM customer_links as cl, risk as r WHERE r.customerid = cl.customerid"
-GET_PAGE_CUSTOMER_LINKS_FOR_RISK_CUSTOMERS = "SELECT DISTINCT cl.customerid, customerid_link FROM customer_links as cl, risk as r WHERE r.customerid = cl.customerid and r.customerid > {} LIMIT 1000"
+GET_PAGE_CUSTOMER_LINKS = "SELECT DISTINCT cl.customerid, cl.customerid_link, cl.cod_link_type FROM customer_links as cl LIMIT {} OFFSET {}"
 GET_ALL_RISK_LINKS_BY_CUSTOMERID = "SELECT DISTINCT cl.customerid, cl.customerid_link, cl.cod_link_type,  cl.des_link_type FROM risk AS r, customer_links AS cl WHERE r.customerid = cl.customerid AND r.customerid={}"
 GET_DEFAULT_RISK_CUSTOMER = "SELECT r.customerid, r.date_ref, r.val_scoring_risk, r.class_scoring_risk, r.val_scoring_pre, r.class_scoring_pre, r.val_scoring_ai, r.class_scoring_ai, r.val_scoring_cr, r.class_scoring_cr, r.val_scoring_bi, r.class_scoring_bi, r.val_scoring_sd, r.class_scoring_sd, r.pre_notching  FROM risk AS r  WHERE r.customerid IN (SELECT DISTINCT r1.customerid FROM ml_crif.risk AS r1 WHERE r1.val_scoring_risk=100) ORDER BY r.customerid asc, r.date_ref asc"
 GET_CUSTOMER_BY_ID = "SELECT birthdate, b_partner, cod_uo, zipcode, region, country_code, c.customer_kind, ck.description as kind_desc, c.customer_type, ct.description as type_desc, uncollectible_status, ateco, sae  FROM customers as c, customer_kinds as ck, customer_types as ct WHERE c.customer_kind=ck.customer_kind AND c.customer_type = ct.customer_type AND c.customerid={} LIMIT 0, 1"
@@ -236,31 +236,41 @@ def check_dataframe_dim(customers_data, expected_size=(18,28)):
     print("len:{}\n{}".format(len(ret), ret))
     return ret
 
-def delete_one_man_company(customers_data, customers_neighbors_dict, id_to_delete=ONE_MAN_COMPANY_COSTUMERS):
+def __delete_customer__(id_to_delete, customers_data, customers_neighbors_dict):
     """
-    delete company with no customers information
+    delete customers form the dataframe and form neihgbors
+    :param id_to_delete:
     :param customers_data:
     :param customers_neighbors_dict:
-    :param id_to_delete:
     :return:
     """
+    deleted_customers = []
+    customers_data = customers_data.drop(id_to_delete, axis=1, level=0)
+    neighbors = customers_neighbors_dict.pop(id_to_delete)
+    deleted_customers.append(id_to_delete)
+
+    # remove also form the neighbors
+    for neighbor in neighbors:
+        if neighbor in customers_neighbors_dict:
+            customers_neighbors_dict[neighbor].remove(id_to_delete)
+            if len(customers_neighbors_dict[neighbor]) == 0:
+                # remove also this neighbors
+                rec_deleted_customers, customers_data, customers_neighbors_dict = __delete_customer__(neighbor, customers_data, customers_neighbors_dict)
+                deleted_customers.extend(rec_deleted_customers)
+    return deleted_customers, customers_data, customers_neighbors_dict
+
+
+def delete_customers(ids_to_delete, customers_data, customers_neighbors_dict):
     deleted_costumers = []
-    for customer_id in id_to_delete:
-        if customer_id in deleted_costumers:
+    for id_to_delete in ids_to_delete:
+        if id_to_delete in deleted_costumers:
             print("already deleted")
             continue
-        customers_data = customers_data.drop(customer_id, axis=1, level=0)
-        neighbors = customers_neighbors_dict.pop(customer_id)
-        deleted_costumers.append(customer_id)
-        for neighbor in neighbors:
-            if neighbor in customers_neighbors_dict:
-                customers_neighbors_dict[neighbor].remove(customer_id)
-                if len(customers_neighbors_dict[neighbor]) == 0:
-                    customers_data = customers_data.drop(neighbor, axis=1, level=0)
-                    customers_neighbors_dict.pop(neighbor)
-                    deleted_costumers.append(neighbor)
-
+        rec_deleted_customers, customers_data, customers_neighbors_dict = __delete_customer__(id_to_delete, customers_data,
+                                                                                              customers_neighbors_dict)
+        deleted_costumers.extend(rec_deleted_customers)
     return customers_data, customers_neighbors_dict
+
 
 def fix_neighbors(customers_data, customers_neighbors):
     """
@@ -318,6 +328,63 @@ def extract_accordato_massimo(customers_data, cursor):
     return accordato_max
 
 
+def check_concistency():
+    customers_data = pd.read_msgpack(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg"))
+    customers_ids = customers_data.columns.get_level_values("id").unique().tolist()
+    G = nx.readwrite.gpickle.read_gpickle(path.join(BASE_DIR, "temp", "prune_graph.bin"))
+
+    print(G.number_of_nodes())
+    print(G.number_of_edges())
+    print(len(customers_ids))
+
+    bad_nodes = list(filter(lambda x: x[1] == 0, list(G.out_degree(customers_ids))))
+    print(bad_nodes)
+    print(len(bad_nodes))
+
+
+
+def create_full_graph(cursor, offset=10000):
+    G = nx.DiGraph()
+    count_total = 0
+    for page in count():
+        count_prev = count_total
+        print(GET_PAGE_CUSTOMER_LINKS.format(offset, page*offset))
+        cursor.execute(GET_PAGE_CUSTOMER_LINKS.format(offset, page*offset))
+
+        for customer_id, customer_link, edge_type in cursor.fetchall():
+            G.add_edge(customer_id, customer_link, rel_type=edge_type)
+            count_total += 1
+
+            if count_total % 500 == 0:
+                print(count_total)
+
+        if count_prev == count_total:
+            break
+
+    nx.readwrite.gpickle.write_gpickle(G, path.join(BASE_DIR, "temp", "full_graph.bin"))
+
+
+
+def prune_graph():
+    G = nx.readwrite.gpickle.read_gpickle(path.join(BASE_DIR, "temp", "full_graph.bin"))
+    customers_data = pd.read_msgpack(path.join(BASE_DIR, "customers_risk_df.msg"))
+    customers_ids = customers_data.columns.get_level_values("id").unique().tolist()
+
+
+    nodes = list(G.nodes())
+    for row, node in enumerate(nodes):
+        if node not in customers_ids:
+            G.remove_node(node)
+
+        if row % 500 == 0:
+            print(row)
+
+    nx.readwrite.gpickle.write_gpickle(G, path.join(BASE_DIR, "temp", "prune_graph.bin"))
+
+    print(G.number_of_nodes(), len(customers_ids))
+    assert G.number_of_nodes() == len(customers_ids)
+
+
 
 
 def extract_data(cursor):
@@ -337,11 +404,7 @@ def extract_data(cursor):
     # customers_data = delete_one_man_company(customers_data, customers_neighbors_dict)
     # customers_data, customers_neighbors_dict = fix_neighbors(customers_data, customers_neighbors_dict)
 
-    customers_data = pd.read_msgpack(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg"))
-    accordato_max_dic = extract_accordato_massimo(customers_data, cursor)
-    pickle.dump(accordato_max_dic, open(path.join(BASE_DIR, "temp", "accordato_max_dic.bin"), "wb"))
-
-
+    check_concistency()
 
 def extract_neighborhod_risk():
     customer_data = pickle.load(open("customer_risk_time.bin", "rb"))
@@ -390,6 +453,7 @@ def extract_neighborhod_risk():
 
 
 if __name__ == "__main__":
+
     cnx = mysql.connector.connect(**config)
     cursor = cnx.cursor()
     try:

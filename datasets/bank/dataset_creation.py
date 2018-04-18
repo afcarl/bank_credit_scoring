@@ -1,272 +1,221 @@
 import mysql.connector
+import pandas as pd
+import networkx as nx
 import pickle
-from os.path import join as path_join
+from os import path
 from collections import OrderedDict
 from bidict import bidict
+import torch
 import numpy as np
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
+
 from datetime import datetime
 import random
-from helper import TIMESTAMP, T_risk, T_attribute, RISK_ATTRIBUTE, C_ATTRIBUTE, REF_DATE, DATE_FORMAT, CustomerSample, PackedNeighbor
-
-config = {
-  'user': 'root',
-  'password': 'vela1990',
-  'host': '127.0.0.1',
-  'database': 'ml_crif',
-}
-
-GET_ALL_CUSTOMER_ID = "SELECT DISTINCT customerid FROM customers"
-GET_ALL_OWNER_ID = "SELECT DISTINCT customerid FROM onemancompany_owners"
-GET_ALL_RISK_ID = "SELECT DISTINCT customerid FROM risk"
-GET_ALL_REVENUE_ID = "SELECT DISTINCT customerid FROM revenue"
-GET_ALL_CUSTOMER_LINKS_ID = "SELECT DISTINCT * FROM (SELECT c_one.customerid FROM customer_links AS c_one UNION SELECT c2.customerid_link FROM customer_links AS c2) AS u"
-GET_ALL_RISK_ID_ONEMANCOMPANY = "SELECT DISTINCT r.customerid FROM risk AS r, onemancompany_owners AS oc WHERE r.customerid = oc.customerid"
-GET_ALL_REVENUE_ID_ONEMANCOMPANY = "SELECT DISTINCT r.customerid FROM revenue AS r, onemancompany_owners AS oc WHERE r.customerid = oc.customerid"
-CUSTOMERS_OWNER_UNION_ID = "SELECT c.customerid FROM customers AS c UNION SELECT o.customerid FROM onemancompany_owners AS o"
-
-GET_ALL_RISK_USER_AND_LINKS = 'SELECT cl.customerid, cl.customerid_link, cl.cod_link_type, cl.des_link_type, r.date_ref, r.val_scoring_risk, r.class_scoring_risk, r.val_scoring_ai, r.class_scoring_ai, r.val_scoring_cr, r.class_scoring_cr, r.val_scoring_bi, r.class_scoring_bi, r.val_scoring_sd, r.class_scoring_sd, r.pre_notching FROM risk AS r, customer_links AS cl WHERE r.customerid = cl.customerid'
-GET_ALL_RISK_LINKS = "SELECT DISTINCT cl.customerid, cl.customerid_link, cl.cod_link_type,  cl.des_link_type FROM risk AS r, customer_links AS cl WHERE r.customerid = cl.customerid"
-
-GET_ALL_CUSTOMER_LINKS = "SELECT * FROM customer_links"
-GET_ALL_RISK = "SELECT customerid, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching FROM risk"
-GET_ALL_CUSTOMER = "SELECT customerid, birthdate, b_partner, cod_uo, zipcode, region, country_code, c.customer_kind, ck.description as kind_desc, c.customer_type, ct.description as type_desc, uncollectible_status, ateco, sae  FROM customers as c, customer_kinds as ck, customer_types as ct WHERE c.customer_kind=ck.customer_kind AND c.customer_type = ct.customer_type"
-GET_RISK_BY_CUSTOMER_ID = "SELECT customerid, date_ref, val_scoring_risk, class_scoring_risk, val_scoring_ai, class_scoring_ai, val_scoring_cr, class_scoring_cr, val_scoring_bi, class_scoring_bi, val_scoring_sd, class_scoring_sd, pre_notching FROM risk WHERE customerid = {}"
-GET_REVENUE_BY_CUSTOMER_ID = "SELECT customerid, date_ref, val_scoring_rev, class_scoring_rev,  val_scoring_op, class_scoring_op,  val_scoring_co, class_scoring_co    FROM revenue WHERE customerid = {}"
-GET_ALL_ONEMANCOMPANY = "SELECT customerid, customerid_join FROM onemancompany_owners"
-GET_ATECO = "SELECT * FROM ateco"
-GET_SAE = "SELECT * FROM sae"
 
 
-ATECO_DICT = bidict({})
-B_PARTNER_DICT = bidict({})
-COD_UO_DICT = bidict({})
-COUNTRY_CODE_DICT = bidict({})
-C_KIND_DICT = bidict({})
-C_TYPE_DICT = bidict({})
-REGION_DICT = bidict({})
-SAE_DICT = bidict({})
-US_DICT = bidict({})
-ZIPCODE_DICT = bidict({})
-SEGMENTO_DICT = bidict({})
+STRING_ATTRIBUTE = ['zipcode', 'segmento', 'b_partner', 'cod_uo', 'region', 'country_code', 'customer_kind', 'customer_type',
+                    'uncollectable_status', 'ateco', 'sae']
+NUMERIC_ATTRIBUTE = ['pre_notching', 'val_scoring_risk', 'val_scoring_pre', 'val_scoring_ai', 'val_scoring_cr', 'val_scoring_bi',
+                     'val_scoring_sd', 'class_scoring_risk', 'class_scoring_pre', 'class_scoring_ai', 'class_scoring_cr', 'class_scoring_bi',
+                     'class_scoring_sd', 'age']
+CLASS_ATTRIBUTE = ['age', 'class_scoring_risk', 'class_scoring_pre', 'class_scoring_ai', 'class_scoring_cr', 'class_scoring_bi', 'class_scoring_sd']
+VAL_ATTRIBUTE = ['pre_notching', 'val_scoring_risk', 'val_scoring_pre', 'val_scoring_ai', 'val_scoring_cr', 'val_scoring_bi', 'val_scoring_sd']
 
-def get_ateco_description():
-    cnx = mysql.connector.connect(**config)
-    cursor = cnx.cursor()
-    ret = {}
+
+BASE_DIR = path.join("..", "..", "data", "customers")
+
+
+softlog = lambda x: torch.log(x + 2)
+
+
+def isnan(x):
+    return x != x
+
+def normalize_num_attribute(X):
+    X = softlog(X)
+    assert not isnan(X).any(), "Nan in the numeric attribute"
+    assert not X.sum() == float("-inf"), "-Inf in the numeric attribute"
+    return X
+
+
+def __att_tansform__(customer_id, df, attribute, encoder_dict):
+    label_encoder = encoder_dict[attribute]['label_encoder']
+    oh_encoder = encoder_dict[attribute]['one_hot_encoder']
+    return oh_encoder.transform(np.expand_dims(label_encoder.transform(df[customer_id, attribute]), 1)).toarray()
+
+
+def __extract_normalize_attribute_torch__(customer_id, num_attribute_df,  cat_attribute_df, encoder_dict):
+
+    cat_attribute = [torch.FloatTensor(__att_tansform__(customer_id, cat_attribute_df, _att_, encoder_dict))
+                     for _att_ in STRING_ATTRIBUTE]
+
+    c_attribute = num_attribute_df.loc[:, pd.IndexSlice[customer_id, CLASS_ATTRIBUTE]].values
+    v_attribute = num_attribute_df.loc[:, pd.IndexSlice[customer_id, VAL_ATTRIBUTE]].values
+
+    c_attribute[c_attribute <= -1] = -1
+    v_attribute[v_attribute <= -1] = -1
+
+    num_attribute = torch.FloatTensor(np.concatenate([c_attribute, v_attribute], axis=1))
+    one_hot_attribute = torch.cat(cat_attribute, dim=1)
     try:
-        cursor.execute(GET_ATECO)
-        for cod_ateco, description in cursor:
-            ret[cod_ateco] = description
-    finally:
-        cnx.close()
-    return ret
+        num_attribute = normalize_num_attribute(num_attribute)
+        ret_att = torch.cat([num_attribute[:-1], one_hot_attribute[:-1]], dim=1)
+        ret_target = num_attribute[1:, 1]
 
-def get_sea_description():
-    cnx = mysql.connector.connect(**config)
-    cursor = cnx.cursor()
-    ret = {}
-    try:
-        cursor.execute(GET_SAE)
-        for cod_sae, description in cursor:
-            ret[cod_sae] = description
-    finally:
-        cnx.close()
-    return ret
+        return ret_att, ret_target
+    except Exception as e:
+        print("customer id", customer_id)
+        print("num_attribute", num_attribute)
+        print("one_hot_attribute", one_hot_attribute)
+        raise e
 
-
-def get_value(id, dict):
+def extract_dateframe(customers_data, G):
     """
-    Compute the value for the given input id
-    :param id:
-    :param dict:
+    extract data and compute one_hot_vectors
+    :param customers_data:
     :return:
     """
-    if id in dict:
-        value = dict[id]
-    else:
-        value = len(dict)
-        dict[id] = value
-    return value
+    num_cat_features = 0
+    cat_encoder_dict = {}
+    # create the labels and transformers for the STRING_ATTRIBUTE
+    for cat_att in STRING_ATTRIBUTE:
+        label_encoder = LabelEncoder()
+        one_hot_encoder = OneHotEncoder()
+        cat_attribute_label = label_encoder.fit_transform(customers_data.loc[:, pd.IndexSlice[:, cat_att]].values.flatten())
+        one_hot_encoder.fit(np.expand_dims(cat_attribute_label, 1))
 
-def get_day_diff(birth_date):
-    '''
-    compute day difference between REF_DATE and the birth day
-    :param birth_date:
+        assert label_encoder.classes_.size == one_hot_encoder.active_features_.size
+        num_cat_features += label_encoder.classes_.size
+
+        cat_encoder_dict[cat_att] = dict(label_encoder=label_encoder,
+                                         one_hot_encoder=one_hot_encoder)
+
+
+    num_attribute_df = customers_data.loc[:, pd.IndexSlice[:, NUMERIC_ATTRIBUTE]]
+    cat_attribute_df = customers_data.loc[:, pd.IndexSlice[:, STRING_ATTRIBUTE]]
+
+    num_attribute_df.to_msgpack(path.join(BASE_DIR, "temp", "num_attribute_df.msg"))
+    cat_attribute_df.to_msgpack(path.join(BASE_DIR, "temp", "cat_attribute_df.msg"))
+    pickle.dump(cat_encoder_dict, open(path.join(BASE_DIR, "temp", "cat_encoder_dict.bin"), "wb"))
+
+
+    num_attribute_df = pd.read_msgpack(path.join(BASE_DIR, "temp", "num_attribute_df.msg"))
+    cat_attribute_df = pd.read_msgpack(path.join(BASE_DIR, "temp", "cat_attribute_df.msg"))
+    cat_encoder_dict = pickle.load(open(path.join(BASE_DIR, "temp", "cat_encoder_dict.bin"), "rb"))
+
+    customer_ids = customers_data.columns.get_level_values("id").unique()
+    customer_id_to_idx = bidict()
+
+
+    seq_len = num_attribute_df.shape[0] - 1
+    print(num_cat_features)
+    num_feature = num_cat_features + len(NUMERIC_ATTRIBUTE)
+    print(num_feature)
+    max_neighbors = 10
+
+    customers_embedding = torch.zeros((customer_ids.size, seq_len, num_feature))
+    targets_embedding = torch.FloatTensor(customer_ids.size, seq_len, 1).zero_()
+    neighbors_embedding = torch.zeros((customer_ids.size, max_neighbors, seq_len, num_feature))
+    neighbors_mask = torch.FloatTensor(customer_ids.size, max_neighbors).zero_()
+    custumers_with_out_degree = []
+    custumers_without_out_degree = []
+
+    for customer_idx, customer_id in enumerate(customer_ids):
+        c_embedding, c_target_embedding = __extract_normalize_attribute_torch__(customer_id, num_attribute_df, cat_attribute_df, cat_encoder_dict)
+
+        customers_embedding[customer_idx] = c_embedding
+        targets_embedding[customer_idx] = c_target_embedding
+
+        # extract neighbors att
+        num_neighbors = G.out_degree(customer_id)
+
+        assert num_neighbors <= max_neighbors
+
+        for n_idx, n_id in enumerate(G.neighbors(customer_id)):
+            n_embedding, _ = __extract_normalize_attribute_torch__(n_id, num_attribute_df, cat_attribute_df, cat_encoder_dict)
+            neighbors_embedding[customer_idx, n_idx] = n_embedding
+            neighbors_mask[customer_idx, n_idx] = 1.
+
+        customer_id_to_idx[customer_id] = customer_idx
+        if num_neighbors > 0:
+            custumers_with_out_degree.append(customer_id)
+        else:
+            custumers_without_out_degree.append(customer_id)
+
+        if customer_idx % 200 == 0:
+            print(customer_idx)
+
+    return customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, customer_id_to_idx, custumers_with_out_degree, custumers_without_out_degree
+
+
+
+
+def split_training_test_dataset(_ids, id_to_idx, e_t_size=2000):
+    """
+    split the dataset in training/testing/eval dataset
+    :param stock_ids: id of each stock
     :return:
-    '''
-    r_date = datetime.strptime(REF_DATE, DATE_FORMAT)
-    b_date = datetime.strptime(birth_date, DATE_FORMAT)
-    return (r_date - b_date).days / 365.2425
+    """
 
-def fix_ateco_code(ateco):
-    return ateco.replace("X", "")
+    test_id_dataset = random.sample(_ids, e_t_size)
+    test_idx_dataset = []
+    for c_id in test_id_dataset:
+        test_idx_dataset.append(id_to_idx[c_id])
+        _ids.remove(c_id)
+
+    eval_id_dataset = random.sample(_ids, e_t_size)
+    eval_idx_dataset = []
+    for c_id in eval_id_dataset:
+        eval_idx_dataset.append(id_to_idx[c_id])
+        _ids.remove(c_id)
+
+    train_idx_dataset = []
+    for c_id in _ids:
+        train_idx_dataset.append(id_to_idx[c_id])
 
 
-def format_risk(risk):
-    check_null = lambda x: -10 if np.isnan(x) else x
+    return train_idx_dataset, eval_idx_dataset, test_idx_dataset
 
-    formatted_risk = OrderedDict()
-
-
-    # extract timestemp
-    for timestemp in TIMESTAMP:
-        # try:
-        t_risk = risk[timestemp]
-
-        # check attribute for give timestemp
-        t_risk_value = []
-        for r_attribute in RISK_ATTRIBUTE:
-            if r_attribute == "segmento":
-                if t_risk[r_attribute] == "UNR" or t_risk[r_attribute] == "UNT":
-                    raise KeyError("segmento-{}".format(t_risk[r_attribute]))
-                else:
-                    t_risk_value.append(get_value(t_risk[r_attribute], SEGMENTO_DICT))
-            else:
-                t_risk_value.append(check_null(t_risk[r_attribute]))
-
-        formatted_t_risk = T_risk._make(t_risk_value)
-
-        # save formatted timestemp
-        formatted_risk[timestemp] = formatted_t_risk
-        # except KeyError as ke:
-        #     print("id:{}\tKey: {}".format(customer_id, ke))
-
-    return formatted_risk
-
-def format_attribute(attribute, ateco_des, sea_des):
-    ateco, ateco_des = attribute["ateco"], ateco_des[attribute["ateco"]]
-    b_partner = attribute['b_partner']
-    birth_date = attribute['birth_date']
-    cod_uo = attribute['cod_uo']
-    country_code = attribute['country_code']
-    c_kind, k_desc = attribute['customer_kind'], attribute['kind_desc']
-    c_type, t_desc = attribute['customer_type'], attribute['type_desc']
-    region = attribute['region']
-    sae, sae_des = attribute['sae'], sea_des[attribute['sae']]
-    uncollectable_status = attribute['uncollectable_status']
-    zipcode = attribute['zipcode']
-
-    atribute_values = [
-        get_value((ateco, ateco_des), ATECO_DICT),
-        get_value(b_partner, B_PARTNER_DICT),
-        get_day_diff(birth_date),
-        get_value(cod_uo, COD_UO_DICT),
-        get_value(country_code, COUNTRY_CODE_DICT),
-        get_value((c_kind, k_desc), C_KIND_DICT),
-        get_value((c_type, t_desc), C_TYPE_DICT),
-        get_value(region, REGION_DICT),
-        get_value((sae, sae_des), SAE_DICT),
-        get_value(uncollectable_status, US_DICT),
-        get_value(zipcode, ZIPCODE_DICT),
-    ]
-    formatted_attribute = T_attribute._make(atribute_values)
-    return formatted_attribute
 
 
 if __name__ == "__main__":
-    customer_data = pickle.load(open(path_join("./data", "customers", "customers_attribute_risk_neighbor.bin"), "rb"))
-    print(len(customer_data))
-    customer_formated_data = {}
-    customerid_to_idx = bidict()
-    customeridx_to_neighborsidx = {}
+    customers_data = pd.read_msgpack(path.join(BASE_DIR, "customers_risk_df.msg"))
+    G = nx.readwrite.gpickle.read_gpickle(path.join(BASE_DIR, "prune_graph.bin"))
 
-    ateco_des = get_ateco_description()
-    sea_des = get_sea_description()
-    max_num_neighbors = 0
-    # extract and format customers
-    for row, (customer_id, customer_attribute) in enumerate(customer_data.items()):
-        try:
-            c_risk, c_node, c_neighbors = customer_attribute["risk_attribute"], customer_attribute["node_attribute"], customer_attribute["neighbor"]
+    # print(customers_data.columns.get_level_values("id").unique().size)
+    # print(customers_data.columns.get_level_values("attribute").unique())
 
-            c_node["ateco"] = fix_ateco_code(c_node["ateco"])
-            c_risk = format_risk(c_risk)
-            c_node = format_attribute(c_node, ateco_des, sea_des)
+    # customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, customer_id_to_idx, customers_with_out_degree, customers_without_out_degree = extract_dateframe(customers_data, G)
+    #
+    # print("num training customers: {}".format(len(customers_with_out_degree)))
+    # print("num not training customers: {}".format(len(customers_without_out_degree)))
+    #
+    # torch.save(customers_embedding, path.join(BASE_DIR, "customers_embed.pt"))
+    # torch.save(targets_embedding, path.join(BASE_DIR, "targets_embed.pt"))
+    # torch.save(neighbors_embedding, path.join(BASE_DIR, "neighbors_embed.pt"))
+    # torch.save(neighbors_mask, path.join(BASE_DIR, "neighbors_msk.pt"))
+    # pickle.dump(customer_id_to_idx, open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "wb"))
 
-            customer_formated_data[customer_id] = CustomerSample(customer_id, [value for timestemp, value in c_risk.items()], c_node)
-            c_idx = len(customerid_to_idx) + 1  # idx = 0 is for null customers
-            customerid_to_idx[customer_id] = c_idx
-        except KeyError as ke:
-            print("{}\t{}".format(customer_id, ke))
-        except Exception as e:
-            raise e
+    customer_id_to_idx = pickle.load(open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "rb"))
+    customers_with_out_degree = []
+    customers_without_out_degree = []
+    for c_id in customers_data.columns.get_level_values("id").unique():
+        if G.out_degree(c_id) > 0:
+            customers_with_out_degree.append(c_id)
+        else:
+            customers_without_out_degree.append(c_id)
 
-        if row % 100 == 0:
-            print(row)
+    print(len(customers_with_out_degree))
+    print(len(customers_without_out_degree))
 
-    print(len(customer_formated_data))
+    pickle.dump(customers_with_out_degree, open(path.join(BASE_DIR, "customers_with_out_degree.bin"), "wb"))
+    pickle.dump(customers_without_out_degree, open(path.join(BASE_DIR, "customers_without_out_degree.bin"), "wb"))
 
+    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(customers_with_out_degree, customer_id_to_idx, 2000)
 
-    # init customerid_to_idx
-    customeridx_formated_data = {}
-    for customer_id in sorted(customer_formated_data.keys()):
-        c_idx = customerid_to_idx[customer_id]
-        customeridx_formated_data[c_idx] = customer_formated_data[customer_id]
-
-        neighbors = []
-        for neighbor_id in customer_data[customer_id]["neighbor"]:
-            if neighbor_id in customerid_to_idx and neighbor_id != customer_id:
-                neighbors.append(neighbor_id)
-        customer_data[customer_id]["neighbor"] = neighbors
-        max_num_neighbors = max(len(neighbors), max_num_neighbors)
-
-    print(len(customeridx_formated_data))
-    print(max_num_neighbors)
-    # init customeridx_to_neighborsidx
-    for c_idx, (c_id, c_risk, c_node) in sorted(customeridx_formated_data.items()):
-        c_neighbors = customer_data[c_id]["neighbor"]
-        neighbors_idx = [0] * max_num_neighbors
-        for idx, neighbor_id in enumerate(c_neighbors):
-            neighbors_idx[idx] = customerid_to_idx[neighbor_id]
-        customeridx_to_neighborsidx[c_idx] = PackedNeighbor(neighbors_idx, len(c_neighbors))
-
-
-    print(len(customeridx_to_neighborsidx))
-
-    pickle.dump(ATECO_DICT, open(path_join("./data", "customers", "dicts", "ateco_dict.bin"), "wb"))
-    pickle.dump(B_PARTNER_DICT, open(path_join("./data", "customers", "dicts", "b_partner_dict.bin"), "wb"))
-    pickle.dump(COD_UO_DICT, open(path_join("./data", "customers", "dicts", "cod_uo_dict.bin"), "wb"))
-    pickle.dump(COUNTRY_CODE_DICT, open(path_join("./data", "customers", "dicts", "country_code_dict.bin"), "wb"))
-    pickle.dump(C_KIND_DICT, open(path_join("./data", "customers", "dicts", "c_kind_dict.bin"), "wb"))
-    pickle.dump(C_TYPE_DICT, open(path_join("./data", "customers", "dicts", "c_type_dict.bin"), "wb"))
-    pickle.dump(REGION_DICT, open(path_join("./data", "customers", "dicts", "region_dict.bin"), "wb"))
-    pickle.dump(SAE_DICT, open(path_join("./data", "customers", "dicts", "sae_dict.bin"), "wb"))
-    pickle.dump(US_DICT, open(path_join("./data", "customers", "dicts", "uncollectable_status_dict.bin"), "wb"))
-    pickle.dump(ZIPCODE_DICT, open(path_join("./data", "customers", "dicts", "zipcode_dict.bin"), "wb"))
-    pickle.dump(SEGMENTO_DICT, open(path_join("./data", "customers", "dicts", "segmento_dict.bin"), "wb"))
-
-    pickle.dump(customeridx_formated_data, open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "wb"))
-    pickle.dump(customerid_to_idx, open(path_join("./data", "customers", "customerid_to_idx.bin"), "wb"))
-    pickle.dump(customeridx_to_neighborsidx, open(path_join("./data", "customers", "customeridx_to_neighborsidx.bin"), "wb"))
-
-    # customer_formated_data = pickle.load(open(path_join("./data", "customers", "customers_formatted_attribute_risk.bin"), "rb"))
-
-    test_sample = random.sample(customeridx_formated_data.keys(), 3000)
-    test_data = []
-    for c_idx in test_sample:
-        test_data.append(c_idx)
-        del customeridx_formated_data[c_idx]
-
-    eval_sample = random.sample(customeridx_formated_data.keys(), 3000)
-    eval_data = []
-    for c_idx in eval_sample:
-        eval_data.append(c_idx)
-        del customeridx_formated_data[c_idx]
-
-    train_data = []
-    for c_idx in customeridx_formated_data.keys():
-        train_data.append(c_idx)
-
-
-
-    pickle.dump(train_data,
-                open(path_join("./data", "customers", "train_customers_formatted_attribute_risk.bin"), "wb"))
-
-    pickle.dump(eval_data,
-                open(path_join("./data", "customers", "eval_customers_formatted_attribute_risk.bin"), "wb"))
-
-    pickle.dump(test_data,
-                open(path_join("./data", "customers", "test_customers_formatted_attribute_risk.bin"), "wb"))
-
+    pickle.dump(train_dataset, open(path.join(BASE_DIR, "train_dataset.bin"), "wb"))
+    pickle.dump(eval_dataset, open(path.join(BASE_DIR, "eval_dataset.bin"), "wb"))
+    pickle.dump(test_dataset, open(path.join(BASE_DIR, "test_dataset.bin"), "wb"))
 
 
 

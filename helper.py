@@ -11,25 +11,9 @@ import numpy as np
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
 
-RISK_ATTRIBUTE = ["segmento",
-                  "class_scoring_risk", "val_scoring_risk",
-                  "class_scoring_ai", "val_scoring_ai",
-                  "class_scoring_bi", "val_scoring_bi",
-                  "class_scoring_cr", "val_scoring_cr",
-                  "class_scoring_sd", "val_scoring_sd",
-                  "pre_notching", "class_scoring_pre"]
-
-C_ATTRIBUTE = ["ateco", "b_partner", "birth_date", "cod_uo", "country_code", "customer_kind", "customer_type", "region",
-               "sae", "uncollectable_status", "zipcode"]
-
 REF_DATE = "2018-01-01"
 DATE_FORMAT = "%Y-%m-%d"
 
-T_risk = namedtuple("T_risk", RISK_ATTRIBUTE)
-T_attribute = namedtuple("T_attribute", C_ATTRIBUTE)
-CustomerSample = namedtuple('CustomerSample', ['customer_id', 'risk', 'attribute'])
-PackedNeighbor = namedtuple('PackedNeighbor', ['neighbors', 'seq_len'])
-PackedWeight = namedtuple('PackedWeight', ['net_weight', 'time_weight'])
 
 use_cuda = torch.cuda.is_available()
 TENSOR_TYPE = dict(f_tensor=torch.cuda.FloatTensor if use_cuda else torch.FloatTensor,
@@ -44,7 +28,7 @@ def msg_unpack(file_name):
     return data
 
 def msg_pack(data, file_name):
-    with open(file_name, "w") as outfile:
+    with open(file_name, "wb") as outfile:
         msgpack.pack(data, outfile)
 
 
@@ -103,99 +87,6 @@ def accuracy(predict, target):
     correct = (target.eq(predict.round())).sum()
     return correct.float() / predict.size(0)
 
-
-
-def update_or_plot(i_iter):
-    if i_iter == 0:
-        return None
-    else:
-        return "append"
-
-
-def get_max_length(path):
-    return len(pickle.load(open(path, "rb")))
-
-
-
-class RiskToTensor(object):
-    def __init__(self, base_path):
-        self.max_segmento = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("segmento")))
-        self.transformer = self.__risk_tensor__
-
-    def __call__(self, sample):
-        return self.transformer(sample)
-
-    def __risk_tensor__(self, risk):
-        return torch.FloatTensor(risk)
-
-    def __risk_tensor_one_hot__(self, risk):
-        segmento_one_hot = torch.zeros((len(risk), self.max_segmento))
-        segmento_idx = [timestemp.segmento for timestemp in risk]
-        segmento_one_hot[:, segmento_idx] = 1
-
-        return torch.cat((segmento_one_hot,
-                          torch.FloatTensor(list(risk))[:, 1:]), dim=1)
-
-class AttributeToTensor(object):
-    def __init__(self, base_path):
-        self.max_ateco = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("ateco")))
-        self.max_b_partner = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("b_partner")))
-        self.max_c_kind = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("c_kind")))
-        self.max_c_type = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("c_type")))
-        self.max_cod_uo = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("cod_uo")))
-        self.max_country_code = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("country_code")))
-        self.max_region = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("region")))
-        self.max_sae = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("sae")))
-        self.max_un_status = get_max_length(
-            os.path.join(base_path, "dicts", "{}_dict.bin".format("uncollectable_status")))
-        self.max_zipcode = get_max_length(os.path.join(base_path, "dicts", "{}_dict.bin".format("zipcode")))
-
-        self.transformer = self.__attribute_tensor__
-
-    def __call__(self, sample):
-        return self.transformer(sample)
-
-    def __attribute_tensor__(self, attribute):
-        return torch.FloatTensor([attribute.ateco, attribute.birth_date, attribute.zipcode, attribute.b_partner,
-                                  attribute.customer_kind, attribute.customer_type, attribute.cod_uo,
-                                  attribute.country_code, attribute.region, attribute.sae, attribute.uncollectable_status])
-
-    def __attribute_one_hot_tensor__(self, attribute):
-
-        b_partner_one_hot = torch.zeros((self.max_b_partner))
-        b_partner_one_hot[attribute.b_partner] = 1
-
-        c_kind_one_hot = torch.zeros((self.max_c_kind))
-        c_kind_one_hot[attribute.customer_kind] = 1
-
-        c_type_one_hot = torch.zeros((self.max_c_type))
-        c_type_one_hot[attribute.customer_type] = 1
-
-        cod_uo_one_hot = torch.zeros((self.max_cod_uo))
-        cod_uo_one_hot[attribute.cod_uo] = 1
-
-        country_code_one_hot = torch.zeros((self.max_country_code))
-        country_code_one_hot[attribute.country_code] = 1
-
-        region_one_hot = torch.zeros((self.max_region))
-        region_one_hot[attribute.region] = 1
-
-        sae_one_hot = torch.zeros((self.max_sae))
-        sae_one_hot[attribute.sae] = 1
-
-        un_status_one_hot = torch.zeros((self.max_un_status))
-        un_status_one_hot[attribute.uncollectable_status] = 1
-
-        return torch.cat((torch.FloatTensor([attribute.ateco, attribute.birth_date, attribute.zipcode]),
-                          b_partner_one_hot,
-                          c_kind_one_hot,
-                          c_type_one_hot,
-                          cod_uo_one_hot,
-                          country_code_one_hot,
-                          region_one_hot,
-                          sae_one_hot,
-                          un_status_one_hot
-                          ))
 
 def get_embeddings(data_dir, prefix=""):
     use_cuda = torch.cuda.is_available()

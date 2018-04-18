@@ -7,7 +7,8 @@ import plotly.graph_objs as go
 import visdom
 from itertools import cycle
 import os.path as path
-import datetime as dt
+from collections import Counter
+import networkx as nx
 
 vis = visdom.Visdom(port=8080)
 
@@ -19,6 +20,27 @@ TIMESTAMP = ['2016-01-31', '2016-02-29', '2016-03-31', '2016-04-30',
 
 BINS = np.array([0, 0.0845, 0.23, 0.4054, 0.575, 0.8848, 1.4213, 2.2963, 3.7337, 6.1263, 10.024, 17.3221, 31.6001, 100])
 BASE_DIR = path.join("..", "..", "data", "customers")
+
+
+class MF(Counter):
+    """A Counter with mass function."""
+
+    def normalize(self):
+        """Normalizes the PMF so the probabilities add to 1."""
+        total = float(sum(self.values()))
+        for key in self:
+            self[key] /= total
+
+    def __hash__(self):
+        """Returns an integer hash value."""
+        return id(self)
+
+    def __eq__(self, other):
+        return self is other
+
+    def inv_render(self):
+        """Returns values and their probabilities, suitable for plotting."""
+        return map(list, zip(*sorted(self.items())))
 
 
 def pairwise(iterable):
@@ -97,19 +119,19 @@ def draw_color_line(X, Y, legends, line_types, colors=['rgba(255, 178, 102, 1)',
     :return:
     """
 
-
     traces = []
-    for ys, legend, line_type in zip(Y, legends, line_types):
-        for row, (y, color) in enumerate(zip(ys, cycle(colors))):
-            traces.append(dict(
+    for row, (ys, legend, line_type, color) in enumerate(zip(Y, legends, line_types, cycle(colors))):
+        traces.append(
+            go.Scatter(
                 x=X,
-                y=y.tolist(),
-                mode='lines',
-                type='line',
-                line=dict(color=color, width=1, dash=line_type),
-                connectgaps=True,
+                y=ys,
+                line=dict(
+                    color=color,
+                    width=2,
+                    dash=line_type),
                 name="{}-{}".format(legend, row)
-            ))
+            )
+        )
 
 
 
@@ -132,8 +154,9 @@ def draw_color_line(X, Y, legends, line_types, colors=['rgba(255, 178, 102, 1)',
                   height=500,
                   showlegend=False
                   )
+    fig = go.Figure(data=traces, layout=layout)
+    py.plot(fig, filename=title)
 
-    return vis._send({'data': traces, 'layout': layout, 'win': 'win_{}'.format(title)})
 
 def __pd_histogram__(df, _idx, class_labels=range(1, 14)):
     """
@@ -209,8 +232,19 @@ def histogram_by_class_by_timestamp(customers_data, attribute="class_scoring_pre
 
 
 if __name__ == "__main__":
-    customers_data = pd.read_msgpack(path.join(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg")))
-    customer
+    # customers_data = pd.read_msgpack(path.join(BASE_DIR, "temp", "customers_risk_time_frame_null_df_final.msg"))
+    G = nx.readwrite.gpickle.read_gpickle(path.join(BASE_DIR, "temp", "prune_graph.bin"))
+    edge_counter = Counter(map(lambda x: x[0], G.edges(data=False)))
+    mf_counter = MF(edge_counter.values())
+
+    # helper.msg_pack(counter, path.join(BASE_DIR, "temp", "customers_neighbors_distr_dict.msg"))
+    print(edge_counter.most_common(10))
+    print(mf_counter.most_common(10))
+    mf_counter.normalize()
+    x, y = mf_counter.inv_render()
+    draw_color_line(x, [y], ["prob"], ['dot'], title="Neighbors distribution", xlabel="number of neighbors", ylabel="probability")
+
+
     # for timestamp in TIMESTAMP:
     #     time_step = dt.datetime.strptime(timestamp, "%Y-%m-%d")
     #     histogram_by_class_by_timestamp(customers_data.loc[time_step, pd.IndexSlice[:, ["pre_notching", "val_scoring_risk", "class_scoring_risk", "class_scoring_pre"]]])

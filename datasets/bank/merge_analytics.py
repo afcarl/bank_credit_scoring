@@ -8,6 +8,8 @@ import pandas as pd
 BASE_DIR = path.join("..", "..", "data", "customers")
 
 
+
+
 def merge_infos():
     accordato_max_dic_1 = pickle.load(open(path.join(BASE_DIR, "temp", "accordato_max_dic_1.bin"), "rb"))
     accordato_max_dic_2 = pickle.load(open(path.join(BASE_DIR, "temp", "accordato_max_dic_2.bin"), "rb"))
