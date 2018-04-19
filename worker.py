@@ -3,7 +3,7 @@ from torch import nn
 import random
 
 
-def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbor_embeddings, seq_len):
+def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbor_embeddings, ngh_msk):
     # EVAL
     model.eval()
     iter_error = 0
@@ -16,12 +16,12 @@ def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbo
         b_input_sequence = Variable(input_embeddings[b_index])
         b_target_sequence = Variable(target_embeddings[b_index])
         b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
-        b_seq_len = seq_len[b_index]
+        b_ngh_msk = ngh_msk[b_index]
 
         node_hidden = model.init_hidden(args.eval_batch_size)
         neighbor_hidden = model.init_hidden(args.max_neighbors * args.eval_batch_size)
 
-        predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, b_seq_len, node_hidden, neighbor_hidden, b_target_sequence)
+        predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, b_ngh_msk, node_hidden, neighbor_hidden, b_target_sequence)
 
         iter_error += model.compute_error(predict.squeeze(), b_target_sequence.squeeze()).data[0]
         if random.random() > args.save_rate:
@@ -44,7 +44,7 @@ def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbo
 
     return iter_error, saved_weights
 
-def train_fn(model, optimizer, dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, seq_len):
+def train_fn(model, optimizer, dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk):
     # TRAIN
     model.train()
     iter_loss = 0
@@ -56,13 +56,13 @@ def train_fn(model, optimizer, dataloader, args, input_embeddings, target_embedd
         b_input_sequence = Variable(input_embeddings[b_index])
         b_target_sequence = Variable(target_embeddings[b_index])
         b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
-        b_seq_len = seq_len[b_index]
+        b_ngh_msk = ngh_msk[b_index]
 
         node_hidden = model.init_hidden(args.batch_size)
         neighbor_hidden = model.init_hidden(args.max_neighbors * args.batch_size)
 
         optimizer.zero_grad()
-        predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, b_seq_len, node_hidden, neighbor_hidden, b_target_sequence)
+        predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, b_ngh_msk, node_hidden, neighbor_hidden, b_target_sequence)
         loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
 
         # print(model.attention.layer_norm.gamma.data)

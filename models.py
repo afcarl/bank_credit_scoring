@@ -2,7 +2,7 @@ import torch
 from helper import rmse, TIMESTAMP, get_attn_mask, get_temperature, BaseNet, TENSOR_TYPE, hookFunc, PositionwiseFeedForward
 from torch.autograd import Variable
 import torch.nn as nn
-from attention_moduls import TimeAttention, SingleHeadAttention, FeatureSingleHeadAttention, FeatureTransformerLayer, NetAttention, TransformerLayer
+from attention_moduls import TimeAttention, FeatureTransformerLayer, TransformerLayer
 import numpy as np
 
 
@@ -34,7 +34,7 @@ class TestNetAttention(BaseNet):
                 torch.nn.init.xavier_uniform(p.data)
         self.attention.layer_norm.gamma.data.fill_(1)
 
-    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
+    def forward(self, node_input, neighbors_input, ngh_msk, node_hidden, neighbors_hidden, target):
         """
         1) compute node RNN
         2) compute neighbors RNN
@@ -47,7 +47,7 @@ class TestNetAttention(BaseNet):
         :param node_hidden: hidden state for node rnn
         :param neighbors_input: neighbors input
         :param neighbors_hidden: hidden state for neighbors rnn
-        :param s_len: number of neighbors
+        :param ngh_msk: number of neighbors
         :return:
         """
         self.batch_size = node_input.size(0)
@@ -58,15 +58,13 @@ class TestNetAttention(BaseNet):
         neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
         neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.time_steps,
                                                               self.hidden_dim)  # reshape to normal dim
+        attn_mask = get_attn_mask(ngh_msk, 1, neighbors_output.size(), self.use_cuda)
+        # node_output = nn.functional.relu(node_output)
+        # neighbors_output = nn.functional.relu(neighbors_output)
 
-        node_output = nn.functional.relu(node_output)
-        neighbors_output = nn.functional.relu(neighbors_output)
 
-        atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, 1)
-        output, weights = self.attention(node_output, neighbors_output, atten_mask)
+        output, weights = self.attention(node_output, neighbors_output, attn_mask)
         output = self.dropout(output)
-        # output = torch.sum(torch.cat((node_output.unsqueeze(1), app_attention), dim=1), dim=1)
-        # output = output.squeeze()
         return self.proj(output), weights
 
 class TestTimeAttention(BaseNet):
@@ -134,16 +132,15 @@ class TranslatorJointAttention(BaseNet):
 
 
 
-    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
+    def forward(self, node_input, neighbors_input, ngh_msk, node_hidden, neighbors_hidden, target):
         self.batch_size = node_input.size(0)
         self.use_cuda = next(self.parameters()).is_cuda
 
-        atten_mask = get_attn_mask(neighbors_input.size(), self.use_cuda, self.time_window)
-
+        attn_mask = get_attn_mask(ngh_msk, self.time_window, neighbors_input.size(), self.use_cuda)
         node_input = self.node_enc(node_input)
         neighbors_input = self.neigh_enc(neighbors_input)
 
-        output, slf_att = self.attention(node_input, neighbors_input, atten_mask)
+        output, slf_att = self.attention(node_input, neighbors_input, attn_mask)
         output = self.poss_wise(output)
         output = self.proj(output).squeeze()
         return output, slf_att
@@ -184,9 +181,9 @@ class RNNJointAttention(BaseNet):
         self.max_neighbors = max_neighbors
         self.time_window = time_window
         self.temperature = temperature
-        self.n_ead = n_head
+        self.n_head = n_head
 
-    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
+    def forward(self, node_input, neighbors_input, ngh_msk, node_hidden, neighbors_hidden, target):
         """
         1) compute node RNN
         2) compute neighbors RNN
@@ -197,7 +194,7 @@ class RNNJointAttention(BaseNet):
         :param node_hidden: hidden state for node rnn
         :param neighbors_input: neighbors input
         :param neighbors_hidden: hidden state for neighbors rnn
-        :param s_len: number of neighbors
+        :param ngh_msk: number of neighbors
         :return:
         """
         self.batch_size = node_input.size(0)
@@ -208,13 +205,14 @@ class RNNJointAttention(BaseNet):
         neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
         neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim) # reshape to normal dim
 
+        attn_mask = get_attn_mask(ngh_msk, self.time_window, neighbors_output.size(), self.use_cuda)
+
+
         # node_output = nn.functional.relu(node_output)
         # neighbors_output = nn.functional.relu(neighbors_output)
 
-        # node_output = self.dropout(node_output)
-        # neighbors_output = self.dropout(neighbors_output)
-
-        attn_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
+        node_output = self.dropout(node_output)
+        neighbors_output = self.dropout(neighbors_output)
         output, attention = self.attention(node_output, neighbors_output, attn_mask)
         output = self.prj(output)
 
@@ -255,7 +253,7 @@ class JordanRNNJointAttention(BaseNet):
         self.n_ead = n_head
 
 
-    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
+    def forward(self, node_input, neighbors_input, ngh_msk, node_hidden, neighbors_hidden, target):
         """
         1) compute node RNN
         2) compute neighbors RNN
@@ -266,7 +264,7 @@ class JordanRNNJointAttention(BaseNet):
         :param node_hidden: hidden state for node rnn
         :param neighbors_input: neighbors input
         :param neighbors_hidden: hidden state for neighbors rnn
-        :param s_len: number of neighbors
+        :param ngh_msk: number of neighbors
         :return:
         """
         self.batch_size = node_input.size(0)
@@ -279,7 +277,7 @@ class JordanRNNJointAttention(BaseNet):
         conditional_outputs = Variable(TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, 3).zero_())
         attentions = TENSOR_TYPE["f_tensor"](self.batch_size, self.time_steps, (self.max_neighbors+1) * self.time_steps).zero_()
 
-        atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
+        attn_mask = get_attn_mask(ngh_msk, self.time_window, neighbors_output.size(), self.use_cuda)
 
         for i in range(self.time_steps):
             node_hidden = self.NodeRNN(torch.cat((node_input[:, i], conditional_outputs[:, i]), dim=-1), node_hidden)
@@ -297,7 +295,7 @@ class JordanRNNJointAttention(BaseNet):
             neighbors_output[:, :, i] = neighbors_hidden.contiguous().view(self.batch_size, self.max_neighbors, self.hidden_dim) # reshape to normal dim
 
 
-            output, attention = self.attention(node_output, neighbors_output, i, atten_mask)
+            output, attention = self.attention(node_output, neighbors_output, i, attn_mask)
 
             output = self.prj(output)
             outputs[:, i] = output
@@ -355,7 +353,7 @@ class RNNJordanJointAttention(BaseNet):
         self.criterion = nn.MSELoss()
 
 
-    def forward(self, node_input, neighbors_input, s_len, node_hidden, neighbors_hidden, target):
+    def forward(self, node_input, neighbors_input, ngh_msk, node_hidden, neighbors_hidden, target):
         """
         1) compute node RNN
         2) compute neighbors RNN
@@ -366,7 +364,7 @@ class RNNJordanJointAttention(BaseNet):
         :param node_hidden: hidden state for node rnn
         :param neighbors_input: neighbors input
         :param neighbors_hidden: hidden state for neighbors rnn
-        :param s_len: number of neighbors
+        :param ngh_msk: number of neighbors
         :return:
         """
         self.batch_size = node_input.size(0)
@@ -390,7 +388,7 @@ class RNNJordanJointAttention(BaseNet):
             neighbors_output[:, :, i] = neighbors_hidden.contiguous().view(self.batch_size, self.max_neighbors, self.hidden_dim) # reshape to normal dim
 
 
-            output, attention, att_norm = self.Attention(node_output, neighbors_output, conditional_outputs, s_len, i, atten_mask[:, i])
+            output, attention, att_norm = self.Attention(node_output, neighbors_output, conditional_outputs, ngh_msk, i, atten_mask[:, i])
             att_norms.append(att_norm)
 
             output = self.dropout(output)
@@ -448,7 +446,7 @@ class OnlyJointAttention(BaseNet):
         self.max_neighbors = max_neighbors
         self.time_window = time_window
 
-    def forward(self, node_input, neighbors_input, s_len):
+    def forward(self, node_input, neighbors_input, ngh_msk):
         """
         3) compute attentions
         4) apply dropout on attention
@@ -457,7 +455,7 @@ class OnlyJointAttention(BaseNet):
         :param node_hidden: hidden state for node rnn
         :param neighbors_input: neighbors input
         :param neighbors_hidden: hidden state for neighbors rnn
-        :param s_len: number of neighbors
+        :param ngh_msk: number of neighbors
         :return:
         """
         self.batch_size = node_input.size(0)
@@ -469,7 +467,7 @@ class OnlyJointAttention(BaseNet):
 
         atten_mask = get_attn_mask(neighbors_output.size(), self.use_cuda, self.time_window)
 
-        output, attention, att_norms = self.Attention(node_output, neighbors_output, s_len, atten_mask)
+        output, attention, att_norms = self.Attention(node_output, neighbors_output, ngh_msk, atten_mask)
         output = self.dropout(output)
         output = self.prj(output)
         return output, attention, torch.mean(att_norms, dim=0)[0]
@@ -500,7 +498,7 @@ class JordanJointAttention(BaseNet):
         self.max_neighbors = max_neighbors
         self.time_window = time_window
 
-    def forward(self, node_input, neighbors_input, s_len, target):
+    def forward(self, node_input, neighbors_input, ngh_msk, target):
         """
         3) compute attentions
         4) apply dropout on attention
@@ -509,7 +507,7 @@ class JordanJointAttention(BaseNet):
         :param node_hidden: hidden state for node rnn
         :param neighbors_input: neighbors input
         :param neighbors_hidden: hidden state for neighbors rnn
-        :param s_len: number of neighbors
+        :param ngh_msk: number of neighbors
         :return:
         """
         self.batch_size = node_input.size(0)
@@ -537,7 +535,7 @@ class JordanJointAttention(BaseNet):
                 if i > 0:
                     atten_mask[:, :i] = 1
 
-            output, attention, att_norm = self.Attention(node_output, neighbors_output, conditional_outputs, s_len, i, atten_mask)
+            output, attention, att_norm = self.Attention(node_output, neighbors_output, conditional_outputs, ngh_msk, i, atten_mask)
             att_norms.append(att_norm)
 
             output = self.dropout(output)

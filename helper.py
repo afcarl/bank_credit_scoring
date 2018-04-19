@@ -45,15 +45,31 @@ def hookFunc(module, gradInput, gradOutput):
         print(gradOutput[0])
 
 
-def get_attn_mask(size, use_cuda, time_size=10):
-    ''' Get an attention mask to avoid using the subsequent info.'''
+def get_attn_mask(ngh_msk, time_window, size, use_cuda=False):
+    time_mask = get_time_mask(time_window, size)
+    mask = get_neigh_mask(ngh_msk, time_mask, size)
+
+    if use_cuda:
+        mask = mask.cuda()
+
+    return mask
+
+def get_neigh_mask(ngh_msk, time_mask, size):
     batch_size, neighbors, time_steps, hidden_dim = size
+    for b_idx, num_ngh in enumerate(ngh_msk):
+        time_mask[b_idx, :, num_ngh*time_steps:].fill_(1)
+
+    return time_mask
+
+
+def get_time_mask(time_size, size):
+    ''' Get an attention mask to avoid using the subsequent info.'''
+    batch_size, max_neighbors, time_steps, hidden_dim = size
     upper_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=1).astype('uint8'))
     lower_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=time_size).astype('uint8'))
     mask = upper_mask + lower_mask.transpose(1, 2)
-    if use_cuda:
-        mask = mask.cuda()
-    return mask
+
+    return mask.repeat(1, 1, max_neighbors + 1)
 
 
 def get_temperature(max_temp, min_temp, decadicy_iteration, total_iterations=None):
@@ -108,15 +124,8 @@ def get_embeddings(data_dir, prefix=""):
     return input_embeddings, target_embeddings, neighbor_embeddings, seq_len
 
 
-def get_customer_embeddings(base_path, file_name, neighbors_file_name, embedding_dim, input_ts_len, output_ts_len, risk_tsfm, attribute_tsfm):
+def get_customer_embeddings(data_dir, prefix=""):
     """
-    generate the embedding.
-    1) Read the raw features
-    2) Convert the raw features in a vector format
-    3) Write the features of each customers in the appropriate embedding matrix position
-    4) Extract the target values
-    5) Extract the neighbors values
-
     :param base_path: directory containing the data
     :param file_name: filename containing the customers data
     :param neighbors_file_name: file name containing the neighbor data
@@ -127,35 +136,30 @@ def get_customer_embeddings(base_path, file_name, neighbors_file_name, embedding
     :param attribute_tsfm: transformer for the attribute features
     :return:
     """
-    customer_embeddings = pickle.load(open(os.path.join(base_path, file_name), "rb"))
-    customer_neighbor_embeddings = pickle.load(open(os.path.join(base_path, neighbors_file_name), "rb"))
+    use_cuda = torch.cuda.is_available()
 
-    assert input_ts_len < len(TIMESTAMP), "input seq_len bigger than total available timestemps"
-    assert output_ts_len < len(TIMESTAMP), "output seq_len bigger than total available timestemps"
+    input_embeddings = torch.load(os.path.join(data_dir, "customers_embed.pt"))
+    target_embeddings = torch.load(os.path.join(data_dir, "targets_embed.pt"))
+    neighbor_embeddings = torch.load(os.path.join(data_dir, "neighbors_embed.pt"))
+    ngh_msk = torch.load(os.path.join(data_dir, "ngh_msk.pt")).byte()
 
-    cs_len = len(customer_embeddings) + 1 # number of contomers + 1 (null customers => idx = 0)
+    num_customers = input_embeddings.size(0)
 
-    input_embedding = torch.FloatTensor(cs_len, input_ts_len, embedding_dim).zero_()
-    target_embedding = torch.FloatTensor(cs_len, output_ts_len).zero_()
-    neighbor_embedding = torch.FloatTensor(cs_len, len(customer_neighbor_embeddings[1].neighbors),
-                                           input_ts_len, embedding_dim).zero_()
-    seq_len = torch.LongTensor(cs_len).zero_()
+    if use_cuda:
+        input_embeddings = input_embeddings.cuda()
+        target_embeddings = target_embeddings.cuda()
+        neighbor_embeddings = neighbor_embeddings.cuda()
+        ngh_msk = ngh_msk.cuda()
 
-    for c_idx, attributes in customer_embeddings.items():
-        c_id, c_risk, c_attribute = attributes
+    if target_embeddings.dim() == 2:
+        target_embeddings = target_embeddings.unsqueeze(-1)
 
-        torch_risk = risk_tsfm(c_risk)
-        torch_attribute = attribute_tsfm(c_attribute)
+    assert num_customers == target_embeddings.size(0)
+    assert num_customers == neighbor_embeddings.size(0)
+    assert num_customers == ngh_msk.size(0)
 
-        input_embedding[c_idx] = torch.cat((torch_risk[:input_ts_len, :], torch_attribute.expand(input_ts_len, torch_attribute.size(0))), dim=1)
-        target_embedding[c_idx] = torch_risk[-output_ts_len:, 2]
 
-    for c_idx in customer_embeddings.keys():
-        n_embedding = input_embedding[customer_neighbor_embeddings[c_idx].neighbors]
-        neighbor_embedding[c_idx] = n_embedding
-        seq_len[c_idx] = customer_neighbor_embeddings[c_idx].seq_len
-
-    return input_embedding, target_embedding, neighbor_embedding, seq_len
+    return input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk
 
 
 

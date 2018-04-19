@@ -2,8 +2,7 @@ from torch import nn, functional as F
 from torch.autograd import Variable
 import torch
 
-from helper import rmse, AttrProxy, BaseNet, get_attn_mask, LayerNorm
-
+from helper import rmse, AttrProxy, BaseNet, LayerNorm
 
 
 class SimpleGRU(BaseNet):
@@ -32,8 +31,7 @@ class SimpleGRU(BaseNet):
 
 
 
-    def forward(self, input_sequence, hidden, b_neighbors_sequence, neighbor_hidden,
-                                                                  b_seq_len):
+    def forward(self, input_sequence, hidden, b_neighbors_sequence, neighbor_hidden, ngh_msk):
         """
         forward pass of the network
         :param input: input to the rnn
@@ -68,23 +66,23 @@ class StructuralRNN(BaseNet):
         self.criterion = nn.MSELoss()
         self.dropout = nn.Dropout(dropout_prob)
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
+
+
+
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, ngh_msk):
         batch_size = node_input.size(0)
         out_hidden = self.init_hidden(batch_size)
 
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
         node_output = self.dropout(node_output)
 
-        # neighbors_input = neighbors_input.view(-1, self.n_timestemp, self.input_dim)  # reduce batch dim
-        # neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
-        # neighbors_output = neighbors_output.view(batch_size, self.max_neighbors, self.n_timestemp, -1)
-        # neighbors_output = torch.sum(neighbors_output, dim=1)
 
         neighbors_input = torch.sum(neighbors_input, dim=1)
         neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
         neighbors_output = self.dropout(neighbors_output)
 
         output, out_hidden = self.out_RNN(torch.cat((node_output, neighbors_output), dim=-1), out_hidden)
+        output = self.dropout(output)
         output = self.prj(output)
         return output
 

@@ -58,7 +58,7 @@ class FeatureMultiHeadAttention(nn.Module):
         S = torch.bmm(q, k.transpose(1, 2))
 
         if attn_mask is not None:
-            S.data.masked_fill_(attn_mask.unsqueeze(1).repeat(self.n_head, 1, self.max_neighbors+1), -float('inf'))
+            S.data.masked_fill_(attn_mask, -float('inf'))
 
         S /= (self.temperature * (self.hidden_dim ** 0.5))
         A = self.softmax(S)
@@ -104,7 +104,7 @@ class TransformerLayer(nn.Module):
         k_s = torch.bmm(k_s, self.w_ks).view(self.n_head * batch_size, -1, self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
         v_s = torch.bmm(v_s, self.w_vs).view(self.n_head * batch_size, -1, self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
 
-        output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask.repeat(self.n_head, 1, self.max_neighbors + 1))
+        output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask.repeat(self.n_head, 1, 1))
         output = self.layer_norm(output + node_enc)
 
         # output = self.pos_ffn(output)
@@ -150,8 +150,10 @@ class FeatureTransformerLayer(nn.Module):
                                              self.hidden_dim)  # (n_head*mb_size*max_neighbors+1) x seq_le x hidden_dim
         v_s = torch.bmm(v_s, self.w_vs).view(self.n_head * batch_size, -1, self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
 
+        attn_mask[:, current_time_step]
+        attn_mask = attn_mask.unsqueeze(1).repeat(self.n_head, 1, 1)
 
-        output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask[:, current_time_step])
+        output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask)
         output = self.layer_norm(output + node_enc[:, current_time_step])
         # output = self.pos_ffn(output)
 
