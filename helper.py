@@ -136,20 +136,20 @@ def get_customer_embeddings(data_dir, prefix=""):
     :param attribute_tsfm: transformer for the attribute features
     :return:
     """
-    use_cuda = torch.cuda.is_available()
 
     input_embeddings = torch.load(os.path.join(data_dir, "customers_embed.pt"))
     target_embeddings = torch.load(os.path.join(data_dir, "targets_embed.pt"))
     neighbor_embeddings = torch.load(os.path.join(data_dir, "neighbors_embed.pt"))
     ngh_msk = torch.load(os.path.join(data_dir, "ngh_msk.pt")).byte()
+    neighbor_types = torch.load(os.path.join(data_dir, "neighbors_type.pt"))
 
     num_customers = input_embeddings.size(0)
 
-    if use_cuda:
-        input_embeddings = input_embeddings.cuda()
-        target_embeddings = target_embeddings.cuda()
-        neighbor_embeddings = neighbor_embeddings.cuda()
-        ngh_msk = ngh_msk.cuda()
+    # if use_cuda:
+    #     input_embeddings = input_embeddings.cuda()
+    #     target_embeddings = target_embeddings.cuda()
+    #     neighbor_embeddings = neighbor_embeddings.cuda()
+    #     ngh_msk = ngh_msk.cuda()
 
     if target_embeddings.dim() == 2:
         target_embeddings = target_embeddings.unsqueeze(-1)
@@ -157,7 +157,9 @@ def get_customer_embeddings(data_dir, prefix=""):
     assert num_customers == target_embeddings.size(0)
     assert num_customers == neighbor_embeddings.size(0)
     assert num_customers == ngh_msk.size(0)
+    assert num_customers == neighbor_types.size(0)
 
+    neighbor_embeddings = torch.cat([neighbor_embeddings, neighbor_types], dim=-1)
 
     return input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk
 
@@ -238,7 +240,7 @@ class BaseNet(torch.nn.Module):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                torch.nn.init.xavier_normal(p.data)
+                torch.nn.init.xavier_normal_(p.data)
 
     def init_hidden(self, batch_size):
         """

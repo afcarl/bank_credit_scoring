@@ -39,19 +39,31 @@ def normalize_num_attribute(X):
 
 
 def __att_tansform__(customer_id, df, attribute, encoder_dict):
+    """transform the categorical attribute.
+    1) categorical attribute => label
+    2) label => one hot vector"""
+
     label_encoder = encoder_dict[attribute]['label_encoder']
     oh_encoder = encoder_dict[attribute]['one_hot_encoder']
     return oh_encoder.transform(np.expand_dims(label_encoder.transform(df[customer_id, attribute]), 1)).toarray()
 
 
 def __extract_normalize_attribute_torch__(customer_id, num_attribute_df,  cat_attribute_df, encoder_dict):
-
+    """
+    trasfrom the customer dataframe in an appropriate representation pytorch tensor
+    :param customer_id:
+    :param num_attribute_df:
+    :param cat_attribute_df:
+    :param encoder_dict:
+    :return:
+    """
+    # convert categorical attribute
     cat_attribute = [torch.FloatTensor(__att_tansform__(customer_id, cat_attribute_df, _att_, encoder_dict))
                      for _att_ in STRING_ATTRIBUTE]
 
+    # convert numerical attribute
     c_attribute = num_attribute_df.loc[:, pd.IndexSlice[customer_id, CLASS_ATTRIBUTE]].values
     v_attribute = num_attribute_df.loc[:, pd.IndexSlice[customer_id, VAL_ATTRIBUTE]].values
-
     c_attribute[c_attribute <= -1] = -1
     v_attribute[v_attribute <= -1] = -1
 
@@ -69,10 +81,10 @@ def __extract_normalize_attribute_torch__(customer_id, num_attribute_df,  cat_at
         print("one_hot_attribute", one_hot_attribute)
         raise e
 
-def extract_dateframe(customers_data, G):
+
+def __label_one_hot_category_encoders__(customers_data):
     """
-    extract data and compute one_hot_vectors
-    :param customers_data:
+    Compute the label and one-hot encoders for the categorical features
     :return:
     """
     num_cat_features = 0
@@ -89,7 +101,35 @@ def extract_dateframe(customers_data, G):
 
         cat_encoder_dict[cat_att] = dict(label_encoder=label_encoder,
                                          one_hot_encoder=one_hot_encoder)
+    return num_cat_features, cat_encoder_dict
 
+def __label_one_hot_edge_type_encode__(G):
+    edge_types = list(set(v for k,v in nx.get_edge_attributes(G, "rel_type").items()))
+    label_encoder = LabelEncoder()
+    one_hot_encoder = OneHotEncoder()
+    edge_types_label = label_encoder.fit_transform(edge_types)
+    one_hot_encoder.fit(edge_types_label.reshape(-1, 1))
+
+    assert label_encoder.classes_.size == one_hot_encoder.active_features_.size
+    num_edge_type_features = label_encoder.classes_.size
+    print("edge type feature sized: {}".format(num_edge_type_features))
+
+    return num_edge_type_features, dict(label_encoder=label_encoder,
+                                        one_hot_encoder=one_hot_encoder)
+
+
+
+
+
+def extract_dateframe(customers_data, G):
+    """
+    extract data and compute one_hot_vectors
+    :param customers_data:
+    :return:
+    """
+    num_edge_type_features, edge_type_encoder_dict = __label_one_hot_edge_type_encode__(G)
+
+    num_cat_features, cat_encoder_dict = __label_one_hot_category_encoders__(customers_data)
 
     num_attribute_df = customers_data.loc[:, pd.IndexSlice[:, NUMERIC_ATTRIBUTE]]
     cat_attribute_df = customers_data.loc[:, pd.IndexSlice[:, STRING_ATTRIBUTE]]
@@ -116,7 +156,8 @@ def extract_dateframe(customers_data, G):
     customers_embedding = torch.zeros((customer_ids.size, seq_len, num_feature))
     targets_embedding = torch.FloatTensor(customer_ids.size, seq_len, 1).zero_()
     neighbors_embedding = torch.zeros((customer_ids.size, max_neighbors, seq_len, num_feature))
-    neighbors_mask = torch.FloatTensor(customer_ids.size, max_neighbors).zero_()
+    neighbors_type_embedding = torch.zeros((customer_ids.size, max_neighbors, seq_len, num_edge_type_features))
+    neighbors_mask = torch.ones(customer_ids.size, 1).byte()
     custumers_with_out_degree = []
     custumers_without_out_degree = []
 
@@ -130,11 +171,15 @@ def extract_dateframe(customers_data, G):
         num_neighbors = G.out_degree(customer_id)
 
         assert num_neighbors <= max_neighbors
-
-        for n_idx, n_id in enumerate(G.neighbors(customer_id)):
+        for n_idx, (c_id, n_id, rel_type) in enumerate(G.out_edges(customer_id, data="rel_type")):
+            assert c_id == customer_id
             n_embedding, _ = __extract_normalize_attribute_torch__(n_id, num_attribute_df, cat_attribute_df, cat_encoder_dict)
             neighbors_embedding[customer_idx, n_idx] = n_embedding
-            neighbors_mask[customer_idx, n_idx] = 1.
+            neighbors_mask[customer_idx] += 1
+            rel_one_hot = edge_type_encoder_dict["one_hot_encoder"].transform(
+                edge_type_encoder_dict["label_encoder"].transform([rel_type]).reshape(-1, 1))
+            neighbors_type_embedding[customer_idx, n_idx] = torch.FloatTensor(np.repeat(rel_one_hot.toarray(), seq_len, axis=0))
+
 
         customer_id_to_idx[customer_id] = customer_idx
         if num_neighbors > 0:
@@ -145,8 +190,7 @@ def extract_dateframe(customers_data, G):
         if customer_idx % 200 == 0:
             print(customer_idx)
 
-    return customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, customer_id_to_idx, custumers_with_out_degree, custumers_without_out_degree
-
+    return customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, neighbors_type_embedding, customer_id_to_idx, custumers_with_out_degree, custumers_without_out_degree
 
 
 
@@ -182,32 +226,23 @@ if __name__ == "__main__":
     customers_data = pd.read_msgpack(path.join(BASE_DIR, "customers_risk_df.msg"))
     G = nx.readwrite.gpickle.read_gpickle(path.join(BASE_DIR, "prune_graph.bin"))
 
+
+
     # print(customers_data.columns.get_level_values("id").unique().size)
     # print(customers_data.columns.get_level_values("attribute").unique())
 
-    # customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, customer_id_to_idx, customers_with_out_degree, customers_without_out_degree = extract_dateframe(customers_data, G)
-    #
-    # print("num training customers: {}".format(len(customers_with_out_degree)))
-    # print("num not training customers: {}".format(len(customers_without_out_degree)))
-    #
-    # torch.save(customers_embedding, path.join(BASE_DIR, "customers_embed.pt"))
-    # torch.save(targets_embedding, path.join(BASE_DIR, "targets_embed.pt"))
-    # torch.save(neighbors_embedding, path.join(BASE_DIR, "neighbors_embed.pt"))
-    # torch.save(neighbors_mask, path.join(BASE_DIR, "neighbors_msk.pt"))
-    # pickle.dump(customer_id_to_idx, open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "wb"))
+    customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, neighbors_type_embedding, customer_id_to_idx, \
+    customers_with_out_degree, customers_without_out_degree = extract_dateframe(customers_data, G)
 
-    customer_id_to_idx = pickle.load(open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "rb"))
-    customers_with_out_degree = []
-    customers_without_out_degree = []
-    for c_id in customers_data.columns.get_level_values("id").unique():
-        if G.out_degree(c_id) > 0:
-            customers_with_out_degree.append(c_id)
-        else:
-            customers_without_out_degree.append(c_id)
+    print("num training customers: {}".format(len(customers_with_out_degree)))
+    print("num not training customers: {}".format(len(customers_without_out_degree)))
 
-    print(len(customers_with_out_degree))
-    print(len(customers_without_out_degree))
-
+    torch.save(customers_embedding, path.join(BASE_DIR, "customers_embed.pt"))
+    torch.save(targets_embedding, path.join(BASE_DIR, "targets_embed.pt"))
+    torch.save(neighbors_embedding, path.join(BASE_DIR, "neighbors_embed.pt"))
+    torch.save(neighbors_mask, path.join(BASE_DIR, "neighbors_msk.pt"))
+    torch.save(neighbors_type_embedding, path.join(BASE_DIR, "neighbors_type.pt"))
+    pickle.dump(customer_id_to_idx, open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "wb"))
     pickle.dump(customers_with_out_degree, open(path.join(BASE_DIR, "customers_with_out_degree.bin"), "wb"))
     pickle.dump(customers_without_out_degree, open(path.join(BASE_DIR, "customers_without_out_degree.bin"), "wb"))
 

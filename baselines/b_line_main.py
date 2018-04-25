@@ -1,6 +1,4 @@
 from helper import CustomDataset, get_embeddings, get_customer_embeddings, ensure_dir
-
-from os.path import join as path_join
 from torch.utils.data import DataLoader
 from baselines.models import SimpleGRU, StructuralRNN, NodeInterpolation, NodeNeighborsInterpolation
 import torch.optim as optim
@@ -12,22 +10,16 @@ import argparse
 import visdom
 from datetime import datetime
 import pickle
+from os import path
 
 vis = visdom.Visdom(port=8080)
 EXP_NAME = "exp-{}".format(datetime.now())
 
 
-config = {
-  'user': 'root',
-  'password': 'vela1990',
-  'host': '127.0.0.1',
-  'database': 'ml_crif',
-}
-
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("..", "data", "customers"), help="Directory containing dataset file")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path.join("..", "data", "customers"), help="Directory containing dataset file")
     parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
@@ -38,11 +30,11 @@ def __pars_args__():
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
     parser.add_argument('--input_dim', type=int, default=932, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=512, help='Hidden state memory size.')
+    parser.add_argument('--hidden_size', type=int, default=1024, help='Hidden state memory size.')
     parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
-    parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0., help="Keep probability for dropout.")
+    parser.add_argument('--max_neighbors', "-m_neig", type=int, default=10, help='Max number of neighbors.')
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
     parser.add_argument('--epsilon', type=float, default=0.1, help='Epsilon value for Adam Optimizer.')
@@ -55,33 +47,38 @@ def __pars_args__():
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        model.train()
         optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
     else:
-        model.eval()
         optimizer = None
 
 
-    def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, seq_len):
+    def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk):
         _loss = 0
         saved_weights = {}
 
         for b_idx, b_index in enumerate(dataset):
-            if args.use_cuda:
-                b_index = b_index.cuda()
-
             b_input_sequence = Variable(input_embeddings[b_index])
             b_target_sequence = Variable(target_embeddings[b_index])
             b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
-            b_seq_len = seq_len[b_index]
+            b_ngh_msk = ngh_msk[b_index]
+
+            if args.use_cuda:
+                b_input_sequence = b_input_sequence.cuda()
+                b_target_sequence = b_target_sequence.cuda()
+                b_neighbors_sequence = b_neighbors_sequence.cuda()
+                b_ngh_msk = b_ngh_msk.cuda()
+
 
             node_hidden = model.init_hidden(batch_size)
             neighbor_hidden = model.init_hidden(batch_size)
 
             if is_training:
+                model.train()
                 optimizer.zero_grad()
+            else:
+                model.eval()
 
-            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_seq_len)
+            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_ngh_msk)
 
             if is_training:
                 loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
@@ -93,7 +90,7 @@ def setup_model(model, batch_size, args, is_training=True):
 
             if is_training:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
 
                 if (b_idx * batch_size) % 1000 == 0:
@@ -123,7 +120,7 @@ if __name__ == "__main__":
     args = __pars_args__()
 
     input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk = get_customer_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
+    model = SimpleGRU(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
                                                  dropout_prob=args.drop_prob)
     model.reset_parameters()
 
@@ -166,7 +163,7 @@ if __name__ == "__main__":
             win="win:train-{}".format(EXP_NAME))
 
         if i_iter % args.eval_step == 0:
-            iter_eval, saved_weights = eval(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, seq_len)
+            iter_eval, saved_weights = eval(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk)
             eval_loss.append(iter_eval)
             vis.line(
                 Y=torch.FloatTensor(eval_loss),
@@ -176,17 +173,17 @@ if __name__ == "__main__":
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
             print("dump example")
-            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "saved_eval_iter_{}_drop_{}.bin".format(int(i_iter/args.eval_step), args.drop_prob))), "wb"))
+            pickle.dump(saved_weights, open(ensure_dir(path.join(args.data_dir, model.name, "saved_eval_iter_{}_drop_{}.bin".format(int(i_iter/args.eval_step), args.drop_prob))), "wb"))
             print("dump done")
 
             if best_model > iter_eval:
                 print("save best model")
                 best_model = iter_eval
-                torch.save(model, path_join(args.data_dir, "{}.pt".format(model.name)))
+                torch.save(model, path.join(args.data_dir, "{}.pt".format(model.name)))
 
 
     # test performance
-    model = torch.load(path_join(args.data_dir, "{}.pt".format(model.name)))
+    model = torch.load(path.join(args.data_dir, "{}.pt".format(model.name)))
     if model.name == "StructuralRNN":
         model.NodeRNN.flatten_parameters()
         model.NeighborRNN.flatten_parameters()
@@ -195,7 +192,7 @@ if __name__ == "__main__":
 
 
     test = setup_model(model, args.eval_batch_size, args, is_training=False)
-    iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, seq_len)
+    iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
-        path_join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))
+        path.join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))

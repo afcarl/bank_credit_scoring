@@ -50,7 +50,7 @@ class StructuralRNN(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, n_timestemps, dropout_prob=0.1):
         super(StructuralRNN, self).__init__()
         self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
-        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.NeighborRNN = nn.GRU(input_dim + 40, hidden_dim, nlayers, batch_first=True, bidirectional=False)
 
         self.name = "StructuralRNN"
         self.out_RNN = nn.GRU(hidden_dim * 2, hidden_dim, nlayers, batch_first=True, bidirectional=False)
@@ -74,11 +74,14 @@ class StructuralRNN(BaseNet):
         out_hidden = self.init_hidden(batch_size)
 
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
+        node_output = nn.functional.relu(node_output)
         node_output = self.dropout(node_output)
+
 
 
         neighbors_input = torch.sum(neighbors_input, dim=1)
         neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
+        neighbors_output = nn.functional.relu(neighbors_output)
         neighbors_output = self.dropout(neighbors_output)
 
         output, out_hidden = self.out_RNN(torch.cat((node_output, neighbors_output), dim=-1), out_hidden)

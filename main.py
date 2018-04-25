@@ -11,16 +11,11 @@ import visdom
 from datetime import datetime
 import pickle
 
-vis = visdom.Visdom(port=8080)
+
+
+vis = visdom.Visdom(port=8098)
 EXP_NAME = "exp-{}".format(datetime.now())
 
-
-config = {
-  'user': 'root',
-  'password': 'vela1990',
-  'host': '127.0.0.1',
-  'database': 'ml_crif',
-}
 
 
 def __pars_args__():
