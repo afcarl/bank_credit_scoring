@@ -159,9 +159,9 @@ def get_customer_embeddings(data_dir, prefix=""):
     assert num_customers == ngh_msk.size(0)
     assert num_customers == neighbor_types.size(0)
 
-    neighbor_embeddings = torch.cat([neighbor_embeddings, neighbor_types], dim=-1)
+    # neighbor_embeddings = torch.cat([neighbor_embeddings, neighbor_types], dim=-1)
 
-    return input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk
+    return input_embeddings, target_embeddings, neighbor_embeddings, neighbor_types, ngh_msk
 
 
 
@@ -240,7 +240,7 @@ class BaseNet(torch.nn.Module):
             if len(p.data.shape) == 1:
                 p.data.fill_(0)
             else:
-                torch.nn.init.xavier_normal_(p.data)
+                torch.nn.init.xavier_normal(p.data)
 
     def init_hidden(self, batch_size):
         """

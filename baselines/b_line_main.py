@@ -30,8 +30,7 @@ def __pars_args__():
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
     parser.add_argument('--input_dim', type=int, default=932, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=1024, help='Hidden state memory size.')
-    parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
+    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0., help="Keep probability for dropout.")
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=10, help='Max number of neighbors.')
@@ -52,7 +51,7 @@ def setup_model(model, batch_size, args, is_training=True):
         optimizer = None
 
 
-    def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk):
+    def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, neighbor_types, ngh_msk):
         _loss = 0
         saved_weights = {}
 
@@ -60,12 +59,14 @@ def setup_model(model, batch_size, args, is_training=True):
             b_input_sequence = Variable(input_embeddings[b_index])
             b_target_sequence = Variable(target_embeddings[b_index])
             b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
+            b_neighbors_types = Variable(neighbor_types[b_index])
             b_ngh_msk = ngh_msk[b_index]
 
             if args.use_cuda:
                 b_input_sequence = b_input_sequence.cuda()
                 b_target_sequence = b_target_sequence.cuda()
                 b_neighbors_sequence = b_neighbors_sequence.cuda()
+                b_neighbors_types = b_neighbors_types.cuda()
                 b_ngh_msk = b_ngh_msk.cuda()
 
 
@@ -78,7 +79,7 @@ def setup_model(model, batch_size, args, is_training=True):
             else:
                 model.eval()
 
-            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_ngh_msk)
+            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_neighbors_types, b_ngh_msk)
 
             if is_training:
                 loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
@@ -90,7 +91,7 @@ def setup_model(model, batch_size, args, is_training=True):
 
             if is_training:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                torch.nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
                 optimizer.step()
 
                 if (b_idx * batch_size) % 1000 == 0:
@@ -119,9 +120,10 @@ def setup_model(model, batch_size, args, is_training=True):
 if __name__ == "__main__":
     args = __pars_args__()
 
-    input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk = get_customer_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = SimpleGRU(args.input_dim, args.hidden_size, args.output_size, args.num_layers, args.max_neighbors, input_embeddings.size(1),
-                                                 dropout_prob=args.drop_prob)
+    input_embeddings, target_embeddings, neighbor_embeddings, neighbor_types, ngh_msk = get_customer_embeddings(args.data_dir, prefix=args.dataset_prefix)
+    model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size,
+                      neighbor_embeddings.size(1), neighbor_types.size(-1), input_embeddings.size(1), dropout_prob=args.drop_prob)
+
     model.reset_parameters()
 
     train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
@@ -148,7 +150,7 @@ if __name__ == "__main__":
     best_model = float("infinity")
 
     for i_iter in range(args.n_iter):
-        iter_loss, _ = train(train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk)
+        iter_loss, _ = train(train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, neighbor_types, ngh_msk)
         total_loss.append(iter_loss)
         print(iter_loss)
 

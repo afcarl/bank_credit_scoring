@@ -8,21 +8,21 @@ from helper import rmse, AttrProxy, BaseNet, LayerNorm
 class SimpleGRU(BaseNet):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, dropout_prob=0.5):
+    def __init__(self, input_dim, hidden_dim, output_dim, max_neighbors, neighbor_types, time_steps, dropout_prob=0.1):
         super(SimpleGRU, self).__init__()
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.nlayers = nlayers
-        self.max_neighbors = max_neighbors
+        self.nlayers = 1
         self.time_steps = time_steps
         self.name = "SimpleRNN"
         self.rnn = nn.GRU(input_dim, hidden_dim,
-                          num_layers=nlayers,
+                          num_layers=1,
                           batch_first=True)
         self.dropout = nn.Dropout(dropout_prob)
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
         #                          nn.Tanh(),
@@ -31,7 +31,7 @@ class SimpleGRU(BaseNet):
 
 
 
-    def forward(self, input_sequence, hidden, b_neighbors_sequence, neighbor_hidden, ngh_msk):
+    def forward(self, input_sequence, hidden, b_neighbors_sequence, neighbor_hidden, neighbor_types, ngh_msk):
         """
         forward pass of the network
         :param input: input to the rnn
@@ -47,44 +47,82 @@ class SimpleGRU(BaseNet):
 
 
 class StructuralRNN(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, n_timestemps, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, max_neighbors, neighbor_types, time_steps, dropout_prob=0.1):
         super(StructuralRNN, self).__init__()
-        self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
-        self.NeighborRNN = nn.GRU(input_dim + 40, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.NodeRNN = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+
+        self.NeighborRNN = {}
+        for i in range(neighbor_types):
+            self.NeighborRNN[i] = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+
 
         self.name = "StructuralRNN"
-        self.out_RNN = nn.GRU(hidden_dim * 2, hidden_dim, nlayers, batch_first=True, bidirectional=False)
+        self.out_RNN = nn.GRU(hidden_dim * (neighbor_types + 1), hidden_dim, 1, batch_first=True, bidirectional=False)
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
                                  nn.ELU())
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.nlayers = nlayers
-        self.n_timestemp = n_timestemps
+        self.nlayers = 1
+        self.time_steps = time_steps
         self.max_neighbors = max_neighbors
+        self.neighbor_types = neighbor_types
         self.criterion = nn.MSELoss()
         self.dropout = nn.Dropout(dropout_prob)
 
 
 
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, ngh_msk):
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, neighbor_types, ngh_msk):
         batch_size = node_input.size(0)
         out_hidden = self.init_hidden(batch_size)
+
+        out_output = Variable(torch.zeros(batch_size, self.time_steps, self.hidden_dim * self.neighbor_types))
+        if torch.cuda.is_available():
+            out_output.cuda()
+
 
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
         node_output = nn.functional.relu(node_output)
         node_output = self.dropout(node_output)
 
 
-
+        neighbors_hidden = neighbors_hidden.unsqueeze(1).expand(-1, self.neighbor_types, -1, -1)
+        neighbor_types = neighbor_types.unsqueeze(-1)
+        neighbor_mask = torch.sum(neighbor_types, dim=1)
+        neighbor_mask[neighbor_mask > 1] = 1.
+        neighbors_input = neighbors_input.unsqueeze(-2) * neighbor_types
         neighbors_input = torch.sum(neighbors_input, dim=1)
-        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
-        neighbors_output = nn.functional.relu(neighbors_output)
-        neighbors_output = self.dropout(neighbors_output)
 
-        output, out_hidden = self.out_RNN(torch.cat((node_output, neighbors_output), dim=-1), out_hidden)
+        for t_idx in range(self.neighbor_types):
+            output_group_by_type, hidden_group_by_type = self.NeighborRNN[t_idx](neighbors_input[:, :, t_idx], neighbors_hidden[:, t_idx])
+            masked_output_group_by_type = output_group_by_type * neighbor_mask[:, :, t_idx]
+            out_output[:, :, t_idx * self.hidden_dim:(t_idx + 1) * self.hidden_dim] = masked_output_group_by_type
+
+        # # partition neighbors according to type
+        # for b_idx in range(batch_size):
+        #     neighbors_input_by_types = {}
+        #
+        #     num_neighbors = ngh_msk[b_idx] - 1
+        #     n_types = torch.nonzero(neighbor_types[b_idx, :num_neighbors])[:, 1]
+        #     for n_idx in range(num_neighbors):
+        #         n_type = n_types[n_idx]
+        #         if n_type in neighbors_input_by_types:
+        #             neighbors_input_by_types[n_type] += neighbors_input[b_idx, n_idx]
+        #         else:
+        #             neighbors_input_by_types[n_type] = neighbors_input[b_idx, n_idx]
+        #
+        #     for t_idx in neighbors_input_by_types.keys():
+        #         input_group_by_type = neighbors_input_by_types[t_idx]
+        #         hidden_group_by_type = self.init_hidden(1)
+        #         output_group_by_type, hidden_group_by_type = self.NeighborRNN[t_idx](input_group_by_type.unsqueeze(0), hidden_group_by_type)
+        #         out_output[b_idx, :, t_idx * self.hidden_dim:(t_idx+1) * self.hidden_dim] = output_group_by_type[0]
+
+        out_output = nn.functional.relu(out_output)
+        out_output = self.dropout(out_output)
+
+        output, out_hidden = self.out_RNN(torch.cat((node_output, out_output), dim=-1), out_hidden)
         output = self.dropout(output)
         output = self.prj(output)
         return output
