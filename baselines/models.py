@@ -45,19 +45,23 @@ class SimpleGRU(BaseNet):
 
 
 
-
 class StructuralRNN(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, max_neighbors, neighbor_types, time_steps, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, max_neighbors, num_edge_types, time_steps, dropout_prob=0.1):
         super(StructuralRNN, self).__init__()
         self.NodeRNN = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.app_NodeRNN = nn.Sequential(nn.Dropout(dropout_prob),
+                                         nn.ELU())
+        NeighborRNN = [nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+                       for i in range(num_edge_types)]
 
-        self.NeighborRNN = {}
-        for i in range(neighbor_types):
-            self.NeighborRNN[i] = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
-
+        self.NeighborRNN = nn.ModuleList(NeighborRNN)
+        self.app_NeighborRNN = nn.Sequential(nn.Dropout(dropout_prob),
+                                             nn.ELU())
 
         self.name = "StructuralRNN"
-        self.out_RNN = nn.GRU(hidden_dim * (neighbor_types + 1), hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.out_RNN = nn.GRU(hidden_dim * (num_edge_types + 1), hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.app_outRNN = nn.Sequential(nn.Dropout(dropout_prob),
+                                             nn.ELU())
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
                                  nn.ELU())
 
@@ -67,129 +71,141 @@ class StructuralRNN(BaseNet):
         self.nlayers = 1
         self.time_steps = time_steps
         self.max_neighbors = max_neighbors
-        self.neighbor_types = neighbor_types
+        self.num_edge_types = num_edge_types
         self.criterion = nn.MSELoss()
         self.dropout = nn.Dropout(dropout_prob)
 
 
 
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, neighbor_types, ngh_msk):
+    def forward(self, node_input, node_hidden, neighbor_input, neighbor_hidden, edge_types, is_supervised):
         batch_size = node_input.size(0)
         out_hidden = self.init_hidden(batch_size)
 
-        out_output = Variable(torch.zeros(batch_size, self.time_steps, self.hidden_dim * self.neighbor_types))
+        out_output = Variable(torch.zeros(batch_size, self.time_steps, self.hidden_dim * self.num_edge_types))
         if torch.cuda.is_available():
-            out_output.cuda()
-
+            out_output = out_output.cuda()
+            out_hidden = out_hidden.cuda()
 
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
-        node_output = nn.functional.relu(node_output)
-        node_output = self.dropout(node_output)
+        node_output = self.app_NodeRNN(node_output)
+
+        if not is_supervised:
+            edge_types = torch.ones((batch_size, self.max_neighbors, self.time_steps, 1))
+            if node_input.is_cuda:
+                edge_types = edge_types.cuda()
 
 
-        neighbors_hidden = neighbors_hidden.unsqueeze(1).expand(-1, self.neighbor_types, -1, -1)
-        neighbor_types = neighbor_types.unsqueeze(-1)
-        neighbor_mask = torch.sum(neighbor_types, dim=1)
-        neighbor_mask[neighbor_mask > 1] = 1.
-        neighbors_input = neighbors_input.unsqueeze(-2) * neighbor_types
-        neighbors_input = torch.sum(neighbors_input, dim=1)
+        neighbor_hidden = neighbor_hidden.unsqueeze(1).expand(-1, self.num_edge_types, -1, -1)
+        edge_types = edge_types.unsqueeze(-1)
+        neighbor_input = neighbor_input.unsqueeze(-2) * edge_types
+        neighbor_input = torch.sum(neighbor_input, dim=1)
 
-        for t_idx in range(self.neighbor_types):
-            output_group_by_type, hidden_group_by_type = self.NeighborRNN[t_idx](neighbors_input[:, :, t_idx], neighbors_hidden[:, t_idx])
-            masked_output_group_by_type = output_group_by_type * neighbor_mask[:, :, t_idx]
-            out_output[:, :, t_idx * self.hidden_dim:(t_idx + 1) * self.hidden_dim] = masked_output_group_by_type
+        if is_supervised:
+            edge_mask = torch.sum(edge_types, dim=1)
+            edge_mask[edge_mask > 1] = 1.
 
-        # # partition neighbors according to type
-        # for b_idx in range(batch_size):
-        #     neighbors_input_by_types = {}
-        #
-        #     num_neighbors = ngh_msk[b_idx] - 1
-        #     n_types = torch.nonzero(neighbor_types[b_idx, :num_neighbors])[:, 1]
-        #     for n_idx in range(num_neighbors):
-        #         n_type = n_types[n_idx]
-        #         if n_type in neighbors_input_by_types:
-        #             neighbors_input_by_types[n_type] += neighbors_input[b_idx, n_idx]
-        #         else:
-        #             neighbors_input_by_types[n_type] = neighbors_input[b_idx, n_idx]
-        #
-        #     for t_idx in neighbors_input_by_types.keys():
-        #         input_group_by_type = neighbors_input_by_types[t_idx]
-        #         hidden_group_by_type = self.init_hidden(1)
-        #         output_group_by_type, hidden_group_by_type = self.NeighborRNN[t_idx](input_group_by_type.unsqueeze(0), hidden_group_by_type)
-        #         out_output[b_idx, :, t_idx * self.hidden_dim:(t_idx+1) * self.hidden_dim] = output_group_by_type[0]
 
-        out_output = nn.functional.relu(out_output)
-        out_output = self.dropout(out_output)
+        for t_idx in range(self.num_edge_types):
+            output_group_by_type, hidden_group_by_type = self.NeighborRNN[t_idx](neighbor_input[:, :, t_idx], neighbor_hidden[:, t_idx])
+            output_group_by_type = self.app_NeighborRNN(output_group_by_type)
+            if is_supervised:
+                output_group_by_type = output_group_by_type * edge_mask[:, :, t_idx]
+            out_output[:, :, t_idx * self.hidden_dim:(t_idx + 1) * self.hidden_dim] = output_group_by_type
 
         output, out_hidden = self.out_RNN(torch.cat((node_output, out_output), dim=-1), out_hidden)
-        output = self.dropout(output)
+        output = self.app_outRNN(output)
         output = self.prj(output)
         return output
 
 
 class NodeNeighborsInterpolation(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, n_timestemps, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, max_neighbors, num_edge_types, time_steps, dropout_prob=0.1):
         super(NodeNeighborsInterpolation, self).__init__()
-        self.node_prj = nn.Linear(input_dim, hidden_dim)
-        self.neight_prj = nn.Linear(input_dim, hidden_dim)
+        self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
+                                      nn.Dropout(dropout_prob),
+                                      nn.ELU())
+        self.neight_prj = nn.ModuleList([nn.Sequential(nn.Linear(input_dim, hidden_dim),
+                                                       nn.Dropout(dropout_prob),
+                                                       nn.ELU())
+                                         for i in range(num_edge_types)])
 
-        self.layer_norm = LayerNorm(hidden_dim)
+        self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), hidden_dim),
+                                 nn.Dropout(dropout_prob),
+                                 nn.ELU(),
+                                 nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
-        self.dropout = nn.Dropout(dropout_prob)
         self.name = "NodeNeighborsInterpolation"
 
-        self.prj = nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim),
-                                 nn.Linear(hidden_dim, output_dim))
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.nlayers = nlayers
-        self.time_steps = n_timestemps
+        self.time_steps = time_steps
         self.max_neighbors = max_neighbors
+        self.num_edge_types = num_edge_types
+        self.nlayers = 0
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
+    def forward(self, node_input, node_hidden, neighbor_input, neighbor_hidden, edge_types, is_supervised):
+        batch_size = node_input.size(0)
+        neighbors_output = Variable(torch.zeros(batch_size, self.time_steps, (self.num_edge_types * self.hidden_dim)))
+        if node_input.is_cuda:
+            neighbors_output = neighbors_output.cuda()
 
-        neighbors_input = neighbors_input.sum(1)
-        neighbors_output = self.neight_prj(neighbors_input)
-
+        # node processing
         node_output = self.node_prj(node_input)
+
+
+        if not is_supervised:
+            edge_types = torch.ones((batch_size, self.max_neighbors, self.time_steps, 1))
+            if node_input.is_cuda:
+                edge_types = edge_types.cuda()
+
+
+        # neighor processing
+        edge_types = edge_types.unsqueeze(-1)
+        if is_supervised:
+            edge_mask = torch.sum(edge_types, dim=1)
+            edge_mask[edge_mask > 1] = 1.
+        neighbor_input = neighbor_input.unsqueeze(-2) * edge_types
+        neighbor_input = torch.sum(neighbor_input, dim=1)
+
+        for t_idx in range(self.num_edge_types):
+            output_group_by_type = self.neight_prj[t_idx](neighbor_input[:, :, t_idx])
+            if is_supervised:
+                masked_output_group_by_type = output_group_by_type * edge_mask[:, :, t_idx]
+            neighbors_output[:, :, t_idx * self.hidden_dim:(t_idx + 1) * self.hidden_dim] = masked_output_group_by_type
 
         output = self.prj(torch.cat((node_output, neighbors_output), dim=-1))
         return output
 
-    def reset_parameters(self):
-        for p in self.parameters():
-            if len(p.data.shape) == 1:
-                p.data.fill_(0)
-            else:
-                torch.nn.init.xavier_normal(p.data)
-        self.layer_norm.gamma.data.fill_(1)
 
 class NodeInterpolation(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, n_timestemps, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, max_neighbors, num_edge_types, time_steps, dropout_prob=0.1):
         super(NodeInterpolation, self).__init__()
-        self.node_prj = nn.Linear(input_dim, hidden_dim)
-        self.dropout = nn.Dropout(dropout_prob)
-        self.prj = nn.Linear(hidden_dim, output_dim)
+        self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
+                                      nn.Dropout(dropout_prob),
+                                      nn.ELU())
+
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
         self.name = "NodeInterpolation"
 
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.nlayers = nlayers
-        self.time_steps = n_timestemps
+        self.nlayers = 0
+        self.num_edge_types = num_edge_types
+        self.time_steps = time_steps
         self.max_neighbors = max_neighbors
         self.criterion = nn.MSELoss()
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
+    def forward(self, node_input, node_hidden, neighbor_input, neighbor_hidden, edge_types, is_supervised):
         self.batch_size = node_input.size(0)
 
         node_output = self.node_prj(node_input)
-        # node_output = nn.functional.relu(node_output)
-        node_output = self.dropout(node_output)
         output = self.prj(node_output)
         return output
 

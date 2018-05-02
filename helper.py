@@ -55,21 +55,20 @@ def get_attn_mask(ngh_msk, time_window, size, use_cuda=False):
     return mask
 
 def get_neigh_mask(ngh_msk, time_mask, size):
-    batch_size, neighbors, time_steps, hidden_dim = size
+    batch_size, edges, time_steps, hidden_dim = size
     for b_idx, num_ngh in enumerate(ngh_msk):
         time_mask[b_idx, :, num_ngh*time_steps:].fill_(1)
 
     return time_mask
 
 
-def get_time_mask(time_size, size):
+def get_time_mask(time_window, size):
     ''' Get an attention mask to avoid using the subsequent info.'''
-    batch_size, max_neighbors, time_steps, hidden_dim = size
+    batch_size, edge_types, time_steps, hidden_dim = size
     upper_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=1).astype('uint8'))
-    lower_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=time_size).astype('uint8'))
+    lower_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=time_window).astype('uint8'))
     mask = upper_mask + lower_mask.transpose(1, 2)
-
-    return mask.repeat(1, 1, max_neighbors + 1)
+    return mask.repeat(1, 1, edge_types + 1)
 
 
 def get_temperature(max_temp, min_temp, decadicy_iteration, total_iterations=None):
@@ -104,24 +103,32 @@ def accuracy(predict, target):
     return correct.float() / predict.size(0)
 
 
+def sample_gumbel(shape, eps=1e-20):
+    noise = torch.rand(shape).float()
+    return - torch.log(eps - torch.log(noise + eps))
+
+
+
+
+
+
 def get_embeddings(data_dir, prefix=""):
     use_cuda = torch.cuda.is_available()
 
     input_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "input_embeddings.bin"), "rb"))
     target_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "target_embeddings.bin"), "rb"))
     neighbor_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "neighbor_embeddings.bin"), "rb"))
-    seq_len = torch.LongTensor([4]*input_embeddings.size(0))
 
     if use_cuda:
         input_embeddings = input_embeddings.cuda()
         target_embeddings = target_embeddings.cuda()
         neighbor_embeddings = neighbor_embeddings.cuda()
-        seq_len = seq_len.cuda()
+
 
     if target_embeddings.dim() == 2:
         target_embeddings = target_embeddings.unsqueeze(-1)
 
-    return input_embeddings, target_embeddings, neighbor_embeddings, seq_len
+    return input_embeddings, target_embeddings, neighbor_embeddings, None
 
 
 def get_customer_embeddings(data_dir, prefix=""):
@@ -140,8 +147,7 @@ def get_customer_embeddings(data_dir, prefix=""):
     input_embeddings = torch.load(os.path.join(data_dir, "customers_embed.pt"))
     target_embeddings = torch.load(os.path.join(data_dir, "targets_embed.pt"))
     neighbor_embeddings = torch.load(os.path.join(data_dir, "neighbors_embed.pt"))
-    ngh_msk = torch.load(os.path.join(data_dir, "ngh_msk.pt")).byte()
-    neighbor_types = torch.load(os.path.join(data_dir, "neighbors_type.pt"))
+    edge_types = torch.load(os.path.join(data_dir, "neighbors_type.pt"))
 
     num_customers = input_embeddings.size(0)
 
@@ -156,12 +162,11 @@ def get_customer_embeddings(data_dir, prefix=""):
 
     assert num_customers == target_embeddings.size(0)
     assert num_customers == neighbor_embeddings.size(0)
-    assert num_customers == ngh_msk.size(0)
-    assert num_customers == neighbor_types.size(0)
+    assert num_customers == edge_types.size(0)
 
     # neighbor_embeddings = torch.cat([neighbor_embeddings, neighbor_types], dim=-1)
 
-    return input_embeddings, target_embeddings, neighbor_embeddings, neighbor_types, ngh_msk
+    return input_embeddings, target_embeddings, neighbor_embeddings, edge_types
 
 
 
@@ -176,6 +181,31 @@ class CustomDataset(Dataset):
         c_idx = self.customers_list[idx]
         return c_idx
 
+
+class GumbelSoftmax(torch.nn.Module):
+    def __init__(self, temperature=1):
+        super(GumbelSoftmax, self).__init__()
+        self.temp = temperature
+
+    def forward(self, input):
+        noise = torch.autograd.Variable(sample_gumbel(input.size()))
+        if input.is_cuda:
+            noise = noise.cuda()
+
+        x = (input + noise) / self.temp
+        x = torch.nn.functional.softmax(x, dim=-1)
+        return x
+
+
+class TempSoftmax(torch.nn.Module):
+    def __init__(self, temperature=1):
+        super(TempSoftmax, self).__init__()
+        self.temp = temperature
+
+    def forward(self, input):
+        x = input/self.temp
+        x = torch.nn.functional.softmax(x, dim=-1)
+        return x
 
 class PositionwiseFeedForward(torch.nn.Module):
     ''' A two-feed-forward-layer module '''
@@ -249,6 +279,9 @@ class BaseNet(torch.nn.Module):
         """
         # weight = next(self.parameters()).data
         # hidden = torch.autograd.Variable(weight.new(self.nlayers, batch_size, self.hidden_dim).zero_())
+        if self.nlayers == 0:
+            return None
+
         hidden = torch.autograd.Variable(torch.zeros((self.nlayers, batch_size, self.hidden_dim)))
         if torch.cuda.is_available():
             hidden = hidden.cuda()

@@ -3,7 +3,89 @@ from torch import nn
 import random
 
 
-def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbor_embeddings, ngh_msk):
+
+def setup_model(model, batch_size, args, is_supervised, is_training=True):
+
+    def execute(dataset, optimizer, input_embeddings, target_embeddings, neighbor_embeddings, edge_types):
+        _loss = 0
+        saved_weights = {}
+
+        if is_training:
+            model.train()
+            optimizer.zero_grad()
+        else:
+            model.eval()
+
+
+
+        for b_idx, b_index in enumerate(dataset):
+            b_input_sequence = Variable(input_embeddings[b_index])
+            b_target_sequence = Variable(target_embeddings[b_index])
+            b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
+            b_edge_types = Variable(edge_types[b_index]) if is_supervised else None
+
+            if args.use_cuda:
+                b_input_sequence = b_input_sequence.cuda()
+                b_target_sequence = b_target_sequence.cuda()
+                b_neighbors_sequence = b_neighbors_sequence.cuda()
+                b_edge_types = b_edge_types.cuda() if is_supervised else None
+
+
+            node_hidden = model.init_hidden(batch_size)
+            neighbor_hidden = model.init_hidden(batch_size)
+
+            predict, node_edge_interaction, edge_types = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden, b_edge_types, b_target_sequence, is_supervised)
+
+            if is_training:
+                loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
+            else:
+                loss = model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
+
+            _loss += loss.data[0]
+            b_idx += 1
+
+            if is_training:
+                loss.backward()
+                nn.utils.clip_grad_norm(model.parameters(), args.max_grad_norm)
+                optimizer.step()
+
+                if (b_idx * args.batch_size) % 1000 == 0:
+                    print("num example:{}\tloss:{}".format((b_idx * args.batch_size), _loss / b_idx))
+
+            elif random.random() > args.save_rate:
+                b_input_sequence = b_input_sequence.data.cpu()
+                b_target_sequence = b_target_sequence.data.cpu()
+                b_neighbors_sequence = b_neighbors_sequence.data.cpu()
+                predict = predict.data.cpu().squeeze()
+                print(predict)
+                # print(b_target_sequence[0], predict[0])
+                for row, idx in enumerate(b_index):
+                    if is_supervised:
+                        saved_weights[idx] = dict(
+                            id=idx,
+                            node_edge_interaction=node_edge_interaction[row].cpu(),
+                            input=b_input_sequence[row],
+                            target=b_target_sequence[row],
+                            neighbors=b_neighbors_sequence[row].squeeze(),
+                            predict=predict[row]
+                        )
+                    else:
+                        saved_weights[idx] = dict(
+                            id=idx,
+                            node_edge_interaction=node_edge_interaction[row].cpu(),
+                            infer_edge_type=edge_types[row].cpu(),
+                            input=b_input_sequence[row],
+                            target=b_target_sequence[row],
+                            neighbors=b_neighbors_sequence[row].squeeze(),
+                            predict=predict[row]
+                        )
+        _loss /= b_idx
+        return _loss, saved_weights
+    return execute
+
+
+
+def eval_fn(model, dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, edge_types):
     # EVAL
     model.eval()
     iter_error = 0
@@ -16,12 +98,18 @@ def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbo
         b_input_sequence = Variable(input_embeddings[b_index])
         b_target_sequence = Variable(target_embeddings[b_index])
         b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
-        b_ngh_msk = ngh_msk[b_index]
+        b_edge_types = Variable(edge_types[b_index], volatile=True)
+
+        if args.use_cuda:
+            b_input_sequence = b_input_sequence.cuda()
+            b_target_sequence = b_target_sequence.cuda()
+            b_neighbors_sequence = b_neighbors_sequence.cuda()
+            b_edge_types = b_edge_types.cuda()
 
         node_hidden = model.init_hidden(args.eval_batch_size)
         neighbor_hidden = model.init_hidden(args.max_neighbors * args.eval_batch_size)
 
-        predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, b_ngh_msk, node_hidden, neighbor_hidden, b_target_sequence)
+        predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden, b_edge_types, b_target_sequence)
 
         iter_error += model.compute_error(predict.squeeze(), b_target_sequence.squeeze()).data[0]
         if random.random() > args.save_rate:
@@ -44,25 +132,40 @@ def eval_fn(model, dataloader, args, input_embeddings, target_embeddings,neighbo
 
     return iter_error, saved_weights
 
-def train_fn(model, optimizer, dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk):
+def train_fn(model, optimizer, dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, edge_types):
     # TRAIN
     model.train()
     iter_loss = 0
+    if edge_types:
+        supervised = True
+    else:
+        supervised = False
+
     # iter_penal = 0
     for b_idx, b_index in enumerate(dataloader):
-        if args.use_cuda:
-            b_index = b_index.cuda()
-
         b_input_sequence = Variable(input_embeddings[b_index])
         b_target_sequence = Variable(target_embeddings[b_index])
         b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
-        b_ngh_msk = ngh_msk[b_index]
+        if supervised:
+            b_edge_types = Variable(edge_types[b_index])
+
+        if args.use_cuda:
+            b_input_sequence = b_input_sequence.cuda()
+            b_target_sequence = b_target_sequence.cuda()
+            b_neighbors_sequence = b_neighbors_sequence.cuda()
+            if supervised:
+                b_edge_types = b_edge_types.cuda()
 
         node_hidden = model.init_hidden(args.batch_size)
         neighbor_hidden = model.init_hidden(args.max_neighbors * args.batch_size)
 
         optimizer.zero_grad()
-        predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, b_ngh_msk, node_hidden, neighbor_hidden, b_target_sequence)
+        if supervised:
+            predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden, b_edge_types, b_target_sequence)
+        else:
+            predict, weights = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden, b_edge_types,
+                                             b_target_sequence)
+
         loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
 
         # print(model.attention.layer_norm.gamma.data)

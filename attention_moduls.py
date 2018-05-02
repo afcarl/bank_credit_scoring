@@ -2,7 +2,55 @@ from torch import nn
 import torch
 import torch.nn.init as init
 
-from helper import get_temperature, TENSOR_TYPE, LayerNorm, BiLinearProjection, hookFunc
+from helper import get_temperature, TENSOR_TYPE, LayerNorm, BiLinearProjection, hookFunc, GumbelSoftmax, TempSoftmax
+
+class EdgeEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, out_dim, temperature=0.77, dropout=0):
+        super(EdgeEncoder, self).__init__()
+
+        self.EdgeGRU = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, out_dim),
+                                 nn.Dropout(dropout),
+                                 nn.ELU())
+        self.attention = GumbelSoftmax(temperature)
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.temperature = temperature
+
+    def forward(self, node_in, neigh_in):
+        """
+        Compute a soft edge type
+        :param neigh_in:
+        :return:
+        """
+        batch_size, max_negih, time_steps, hidden_dim = neigh_in.size()
+
+
+        hidden = torch.autograd.Variable(torch.zeros((1, max_negih*batch_size, self.hidden_dim)))
+        if torch.cuda.is_available():
+            hidden = hidden.cuda()
+
+        # reshape
+        node_in = node_in.repeat(max_negih, 1, 1)
+        neigh_in = torch.cat(torch.split(neigh_in, 1, dim=1), dim=0)[:, 0]
+        # create independent encoding
+        edges_enc = torch.cat((node_in, neigh_in), dim=-1)
+        edges_enc = edges_enc.bmm(edges_enc.transpose(1, 2))
+
+        # get edge encoding overtime
+        edge_enc_out, hidden = self.EdgeGRU(edges_enc, hidden)
+        edge_enc_out = self.prj(edge_enc_out)
+
+        # get edge type distribution
+        edge_enc_out /= self.temperature
+        output = self.attention(edge_enc_out)
+        output = torch.stack(torch.split(output, batch_size, dim=0), dim=1)
+        return output
+
+
+
+
 
 
 class MultiHeadAttention(nn.Module):
@@ -14,8 +62,8 @@ class MultiHeadAttention(nn.Module):
         self.max_neighbors = max_neighbors
         self.time_steps = time_steps
         self.temperature = temperature
-
-        self.softmax = nn.Softmax(dim=-1)
+        self.softmax = TempSoftmax(temperature)
+        # self.softmax = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
         self.prj = nn.Linear(hidden_dim * n_head, hidden_dim)
 
@@ -27,7 +75,7 @@ class MultiHeadAttention(nn.Module):
         if attn_mask is not None:
             S.data.masked_fill_(attn_mask, -float('inf'))
 
-        S /= (self.temperature * (self.hidden_dim ** 0.5))
+        # S /= (self.temperature * (self.hidden_dim ** 0.5))
         # S /= self.temperature
         A = self.softmax(S)
         output = torch.bmm(A, v)
@@ -70,13 +118,13 @@ class FeatureMultiHeadAttention(nn.Module):
 
 
 class TransformerLayer(nn.Module):
-    def __init__(self, n_head, input_dim, hidden_dim, max_neighbors, time_steps, temperature=1, dropout=0):
+    def __init__(self, n_head, input_dim, hidden_dim, component_num, time_steps, temperature=1, dropout=0):
         super(TransformerLayer, self).__init__()
         self.name = "_TransformerAttention"
         self.n_head = n_head
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
-        self.max_neighbors = max_neighbors
+        self.component_num = component_num
         self.time_steps = time_steps
 
 
@@ -84,7 +132,7 @@ class TransformerLayer(nn.Module):
         self.w_ks = nn.Parameter(torch.FloatTensor(n_head, input_dim, hidden_dim))
         self.w_vs = nn.Parameter(torch.FloatTensor(n_head, input_dim, hidden_dim))
 
-        self.slf_attn = MultiHeadAttention(n_head, hidden_dim, max_neighbors, time_steps, temperature=temperature, dropout=dropout)
+        self.slf_attn = MultiHeadAttention(n_head, hidden_dim, component_num, time_steps, temperature=temperature, dropout=dropout)
         self.layer_norm = LayerNorm(hidden_dim)
 
 
@@ -106,6 +154,7 @@ class TransformerLayer(nn.Module):
 
         output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask.repeat(self.n_head, 1, 1))
         output = self.layer_norm(output + node_enc)
+        # output = output + node_enc
 
         # output = self.pos_ffn(output)
 

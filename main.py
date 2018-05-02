@@ -1,5 +1,5 @@
 from helper import CustomDataset, get_embeddings, get_customer_embeddings, ensure_dir, hookFunc
-from worker import train_fn, eval_fn
+from worker import setup_model
 from os.path import join as path_join
 from torch.utils.data import DataLoader
 from models import TestNetAttention, RNNJointAttention, JordanRNNJointAttention, TranslatorJointAttention
@@ -20,8 +20,8 @@ EXP_NAME = "exp-{}".format(datetime.now())
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "customers"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
@@ -30,14 +30,14 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=932, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=512, help='Hidden state memory size.')
-    parser.add_argument('--num_layers', type=int, default=1, help='Number of rnn layers.')
-    parser.add_argument('--time_windows', type=int, default=17, help='Attention time windows.')
-    parser.add_argument('--max_neighbors', "-m_neig", type=int, default=10, help='Max number of neighbors.')
-    parser.add_argument('--output_size', type=int, default=1, help='output size.')
+    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
+    parser.add_argument('--hidden_dim', type=int, default=5, help='Hidden state memory size.')
+    parser.add_argument('--output_dim', type=int, default=1, help='output size.')
+    parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
+    parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
+    parser.add_argument('--num_edge_types', "-e_types", type=int, default=2, help='Number of edge types.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
-    parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
+    parser.add_argument('--temp', type=float, default=0.6, help="Softmax temperature")
     parser.add_argument('--n_head', type=int, default=4, help="attention head number")
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
@@ -54,11 +54,9 @@ def __pars_args__():
 
 if __name__ == "__main__":
     args = __pars_args__()
-    input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk = get_customer_embeddings(args.data_dir)
-    model = RNNJointAttention(args.input_dim, args.hidden_size, args.output_size, args.n_head, args.num_layers,
-                                    args.max_neighbors, input_embeddings.size(1), args.time_windows,
-                                    dropout_prob=args.drop_prob,
-                                    temperature=args.temp)
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_types = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
+    model = RNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.max_neighbors, args.num_edge_types,
+                              input_embeddings.size(1), args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
 
     train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
     eval_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
@@ -75,6 +73,9 @@ if __name__ == "__main__":
     model.reset_parameters()
     optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
 
+    is_supervised = False
+    train_fn = setup_model(model, args.batch_size, args, is_supervised, True)
+    eval_fn = setup_model(model, args.eval_batch_size, args, is_supervised, False)
 
 
     total_loss = []
@@ -83,7 +84,7 @@ if __name__ == "__main__":
     best_model = float("infinity")
 
     for i_iter in range(args.n_iter):
-        iter_loss = train_fn(model, optimizer, train_dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk)
+        iter_loss, _ = train_fn(train_dataloader, optimizer, input_embeddings, target_embeddings, neighbor_embeddings, edge_types)
         total_loss.append(iter_loss)
 
         print(iter_loss)
@@ -100,7 +101,7 @@ if __name__ == "__main__":
             win="win:train-{}".format(EXP_NAME))
 
         if i_iter % args.eval_step == 0:
-            iter_eval, saved_weights = eval_fn(model, eval_dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk)
+            iter_eval, saved_weights = eval_fn(eval_dataloader, optimizer, input_embeddings, target_embeddings, neighbor_embeddings, edge_types)
             eval_loss.append(iter_eval)
 
             vis.line(
@@ -120,10 +121,8 @@ if __name__ == "__main__":
 
     # test performance
     model = torch.load(path_join(args.data_dir, "{}.pt".format(model.name)))
-    # model.NodeRNN.flatten_parameters()
-    # model.NeighborRNN.flatten_parameters()
 
-    iter_test, saved_weights = eval_fn(model, test_dataloader, args, input_embeddings, target_embeddings, neighbor_embeddings, ngh_msk)
+    iter_test, saved_weights = eval_fn(eval_dataloader, optimizer, input_embeddings, target_embeddings, neighbor_embeddings, edge_types)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
         path_join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))
