@@ -157,16 +157,20 @@ class TranslatorJointAttention(BaseNet):
 
 
 class RNNJointAttention(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, n_head, max_neighbors, num_edge_types, time_steps, time_window, dropout_prob=0.1, temperature=1):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_head, time_window, temperature=1, dropout_prob=0.1):
         super(RNNJointAttention, self).__init__()
 
-        self.Edge_enc = EdgeEncoder(time_steps, hidden_dim, num_edge_types, dropout=dropout_prob)
-
         self.NodeRNN = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
-        NeighborRNN = [nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False) for i in range(num_edge_types)]
-        self.NeighborRNN = nn.ModuleList(NeighborRNN)
-        self.attention = TransformerLayer(n_head, hidden_dim, hidden_dim, num_edge_types, time_steps, temperature=temperature, dropout=dropout_prob)
-        self.dropout = nn.Dropout(dropout_prob)
+        self.NodeRNN_trans = nn.Sequential(nn.Dropout(dropout_prob),
+                                           nn.ELU())
+
+        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.NeighborRNN_trans = nn.Sequential(nn.Dropout(dropout_prob),
+                                               nn.ELU())
+
+        self.attention = TransformerLayer(n_head, hidden_dim, hidden_dim, temperature=temperature, dropout=dropout_prob)
+
+
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
                     # nn.Sequential(nn.Linear(hidden_dim, hidden_dim//2),
@@ -180,70 +184,37 @@ class RNNJointAttention(BaseNet):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.nlayers = 1
-        self.time_steps = time_steps
-        self.max_neighbors = max_neighbors
         self.time_window = time_window
         self.temperature = temperature
         self.n_head = n_head
-        self.num_edge_types = num_edge_types
 
-    def forward(self, node_input, neighbors_input, node_hidden, neighbors_hidden, edge_weights, target, is_supervised):
+    def forward(self, node_input, neighbors_input, node_hidden, neighbors_hidden, edge_weights, mask_neight, mask_time, target):
         # param setup
-        batch_size = node_input.size(0)
         use_cuda = next(self.parameters()).is_cuda
-        neighbors_output = Variable(torch.zeros(batch_size, self.num_edge_types, self.time_steps, self.hidden_dim))
-        # out_hidden = self.init_hidden(batch_size)
-        if use_cuda:
-            neighbors_output = neighbors_output.cuda()
-            # out_hidden = out_hidden.cuda()
+        batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
 
-        if not is_supervised:
-            edge_weights = self.Edge_enc(node_input, neighbors_input)
-
-        # process node
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
+        node_output = self.NodeRNN_trans(node_output)
+
+        neighbors_input = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
+        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
+        neighbors_output = self.NeighborRNN_trans(neighbors_output)
+        neighbors_output = torch.stack(torch.chunk(neighbors_output, neigh_number, dim=0), dim=1)
 
 
 
-        neighbors_hidden = neighbors_hidden.unsqueeze(1).expand(-1, self.num_edge_types, -1, -1)
-        edge_weights = edge_weights.unsqueeze(-1)
-        neighbors_input = neighbors_input.unsqueeze(-2) * edge_weights
-        neighbors_input = torch.sum(neighbors_input, dim=1)
 
+        att_mask = mask_time.unsqueeze(-2).repeat(1, 1, neigh_number, 1)
+        mask_neight = mask_neight.unsqueeze(-2).unsqueeze(-1).repeat(1, time_steps, 1, time_steps)
+        att_mask = att_mask.masked_fill_(mask_neight, 1).view(batch_size, time_steps, -1)
+        att_mask = torch.cat((mask_time, att_mask), dim=-1)
 
-        for t_idx in range(self.num_edge_types):
-            output_group_by_type, hidden_group_by_type = self.NeighborRNN[t_idx](neighbors_input[:, :, t_idx], neighbors_hidden[:, t_idx])
-            neighbors_output[:, t_idx] = output_group_by_type
-
-        node_output = nn.functional.elu(node_output)
-        node_output = self.dropout(node_output)
-
-        neighbors_output = nn.functional.elu(neighbors_output)
-        neighbors_output = self.dropout(neighbors_output)
-
-        # get time attention mask
-        att_time_mask = get_time_mask(self.time_window, neighbors_output.size())
-        # combine edge and attention mask
-        if is_supervised:
-            # edge mask only for supervised models
-            att_edge_mask = torch.sum(edge_weights, dim=1)
-            att_edge_mask[att_edge_mask > 1] = 1.
-            att_edge_mask = 1 - att_edge_mask
-            att_edge_mask.expand(-1, -1, self.time_steps)
-
-            att_mask = att_edge_mask + att_time_mask
-            att_mask[att_mask > 1] = 1.
-        else:
-            att_mask = att_time_mask
 
         output, attention = self.attention(node_output, neighbors_output, att_mask)
-
         output = self.prj(output)
         output = output.squeeze()
-        if is_supervised:
-            return output, attention, None
-        else:
-            return output, attention, edge_weights
+        return output, attention
+
 
     def reset_parameters(self):
         for p in self.parameters():

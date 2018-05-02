@@ -90,6 +90,53 @@ def generate_noise_embedding(dim, num_neighbors, offset_sampler = torch.distribu
     return input_embeddings, target_embeddings, neighbor_embeddings, "simple"
 
 
+def generate_noise_embedding(dim, max_num_neighbors,
+                             offset_sampler=torch.distributions.Categorical(torch.Tensor([0.25, 0.25, 0.25])),
+                             randomize_neighbors=False,
+                             dynamic_num_neighbors=False):
+    prefix = "simple"
+    if randomize_neighbors:
+        prefix += "_random"
+    if dynamic_num_neighbors:
+        prefix += "_dynamic"
+
+    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).uniform_(1, 10).int().float()
+    input_embeddings, _ = torch.sort(input_embeddings, 1)
+    neighbor_embeddings = torch.FloatTensor(dim[0], max_num_neighbors, dim[1], 1).zero_()
+    target_embeddings = torch.FloatTensor(dim[0], dim[1]).zero_()
+    edge_type = torch.ones(dim[0], max_num_neighbors, dim[1], 1)
+    neigh_mask = torch.zeros(dim[0], max_num_neighbors)
+
+
+    for idx in range(input_embeddings.size(0)):
+        n_embedding = torch.FloatTensor(max_num_neighbors, dim[1], 1).zero_()
+        num_neighbors = max_num_neighbors - 1
+        # sample number of neighbors
+        if dynamic_num_neighbors:
+            num_neighbors = random.randint(2, max_num_neighbors)
+
+        n_embedding[0] = input_embeddings[idx]
+        n_embedding[num_neighbors - 1] = torch.FloatTensor(dim[1], 1).uniform_(0, 10)
+        if (num_neighbors - 2) > 0:
+            n_embedding[1:(num_neighbors-1)] = input_embeddings[idx].repeat(num_neighbors-2, 1, 1) + \
+                                               offset_sampler.sample(sample_shape=(num_neighbors-2, 1, 1)).float()
+        # compute target value
+        n_embedding = n_embedding.int().float()
+        target_embeddings[idx] = torch.sum(torch.cat((input_embeddings[idx].unsqueeze(0), n_embedding[:num_neighbors-1]), dim=0), dim=0)
+
+        # compute mask
+        if num_neighbors < max_num_neighbors:
+            neigh_mask[idx, num_neighbors:] = 1
+
+        # randomize order
+        if randomize_neighbors:
+            n_embedding[:num_neighbors] = n_embedding[torch.randperm(num_neighbors)]
+        neighbor_embeddings[idx] = n_embedding
+
+    return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask.byte(), prefix
+
+
+
 def generate_middle_select_embedding(dim, num_neighbors, pos=5):
     input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).uniform_(0, 10)
 
@@ -169,13 +216,18 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings, prefix = generate_noise_triangular_embedding((12000, 10), 4)
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_type, mask_neigh, prefix = generate_noise_embedding((12000, 10), 4,
+                                                                                                randomize_neighbors=True,
+                                                                                                dynamic_num_neighbors=True)
 
-    pickle.dump(input_embeddings, open(ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.bin")), "wb"))
-    pickle.dump(target_embeddings, open(path.join(BASE_DIR, prefix+"_target_embeddings.bin"), "wb"))
-    pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, prefix+"_neighbor_embeddings.bin"), "wb"))
+    torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.pt")))
+    torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, prefix + "_target_embeddings.pt")))
+    torch.save(neighbor_embeddings, ensure_dir(path.join(BASE_DIR, prefix + "_neighbor_embeddings.pt")))
+    torch.save(edge_type, ensure_dir(path.join(BASE_DIR, prefix + "_edge_type.pt")))
+    torch.save(mask_neigh, ensure_dir(path.join(BASE_DIR, prefix + "_mask_neighbor.pt")))
+
 
     train_dataset, eval_dataset, test_dataset = split_training_test_dataset(list(range(input_embeddings.size(0))), e_t_size=1000)
-    pickle.dump(train_dataset, open(path.join(BASE_DIR, prefix+"_train_dataset.bin"), "wb"))
-    pickle.dump(eval_dataset, open(path.join(BASE_DIR, prefix+"_eval_dataset.bin"), "wb"))
-    pickle.dump(test_dataset, open(path.join(BASE_DIR, prefix+"_test_dataset.bin"), "wb"))
+    torch.save(train_dataset, path.join(BASE_DIR, prefix+"_train_dataset.pt"))
+    torch.save(eval_dataset, path.join(BASE_DIR, prefix+"_eval_dataset.pt"))
+    torch.save(test_dataset, path.join(BASE_DIR, prefix+"_test_dataset.pt"))

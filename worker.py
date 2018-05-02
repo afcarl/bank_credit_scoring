@@ -1,20 +1,17 @@
 from torch.autograd import Variable
+from torch import optim
 from torch import nn
 import random
+from helper import get_time_mask
 
 
+def setup_model(model, batch_size, args, is_training=True):
+    if is_training:
+        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
 
-def setup_model(model, batch_size, args, is_supervised, is_training=True):
-
-    def execute(dataset, optimizer, input_embeddings, target_embeddings, neighbor_embeddings, edge_types):
+    def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neigh):
         _loss = 0
         saved_weights = {}
-
-        if is_training:
-            model.train()
-            optimizer.zero_grad()
-        else:
-            model.eval()
 
 
 
@@ -22,19 +19,29 @@ def setup_model(model, batch_size, args, is_supervised, is_training=True):
             b_input_sequence = Variable(input_embeddings[b_index])
             b_target_sequence = Variable(target_embeddings[b_index])
             b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
-            b_edge_types = Variable(edge_types[b_index]) if is_supervised else None
+            b_edge_types = Variable(edge_types[b_index])
+            b_mask_neigh = mask_neigh[b_index]
+            b_mask_time = get_time_mask(args.time_windows, b_neighbors_sequence.size())
 
             if args.use_cuda:
                 b_input_sequence = b_input_sequence.cuda()
                 b_target_sequence = b_target_sequence.cuda()
                 b_neighbors_sequence = b_neighbors_sequence.cuda()
-                b_edge_types = b_edge_types.cuda() if is_supervised else None
-
+                b_edge_types = b_edge_types.cuda()
+                b_mask_neigh = b_mask_neigh.cuda()
+                b_mask_time = b_mask_time.cuda()
 
             node_hidden = model.init_hidden(batch_size)
-            neighbor_hidden = model.init_hidden(batch_size)
+            neighbor_hidden = model.init_hidden(batch_size*args.max_neighbors)
 
-            predict, node_edge_interaction, edge_types = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden, b_edge_types, b_target_sequence, is_supervised)
+            if is_training:
+                model.train()
+                optimizer.zero_grad()
+            else:
+                model.eval()
+
+            predict, node_node_interaction = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden,
+                                                                       b_edge_types, b_mask_neigh, b_mask_time, b_target_sequence)
 
             if is_training:
                 loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
@@ -56,29 +63,22 @@ def setup_model(model, batch_size, args, is_supervised, is_training=True):
                 b_input_sequence = b_input_sequence.data.cpu()
                 b_target_sequence = b_target_sequence.data.cpu()
                 b_neighbors_sequence = b_neighbors_sequence.data.cpu()
+                b_edge_types = b_edge_types.data.cpu()
+                b_mask_neigh = b_mask_neigh.cpu()
                 predict = predict.data.cpu().squeeze()
                 print(predict)
                 # print(b_target_sequence[0], predict[0])
                 for row, idx in enumerate(b_index):
-                    if is_supervised:
-                        saved_weights[idx] = dict(
-                            id=idx,
-                            node_edge_interaction=node_edge_interaction[row].cpu(),
-                            input=b_input_sequence[row],
-                            target=b_target_sequence[row],
-                            neighbors=b_neighbors_sequence[row].squeeze(),
-                            predict=predict[row]
-                        )
-                    else:
-                        saved_weights[idx] = dict(
-                            id=idx,
-                            node_edge_interaction=node_edge_interaction[row].cpu(),
-                            infer_edge_type=edge_types[row].cpu(),
-                            input=b_input_sequence[row],
-                            target=b_target_sequence[row],
-                            neighbors=b_neighbors_sequence[row].squeeze(),
-                            predict=predict[row]
-                        )
+                    saved_weights[idx] = dict(
+                        id=idx,
+                        node_node_interaction=node_node_interaction[row].cpu(),
+                        input=b_input_sequence[row],
+                        target=b_target_sequence[row],
+                        neighbors=b_neighbors_sequence[row].squeeze(),
+                        edge_type=b_edge_types[row].squeeze(),
+                        mask_neigh=b_mask_neigh[row],
+                        predict=predict[row]
+                    )
         _loss /= b_idx
         return _loss, saved_weights
     return execute

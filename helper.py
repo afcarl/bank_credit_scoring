@@ -64,11 +64,11 @@ def get_neigh_mask(ngh_msk, time_mask, size):
 
 def get_time_mask(time_window, size):
     ''' Get an attention mask to avoid using the subsequent info.'''
-    batch_size, edge_types, time_steps, hidden_dim = size
+    batch_size, num_neight, time_steps, hidden_dim = size
     upper_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=1).astype('uint8'))
     lower_mask = torch.from_numpy(np.triu(np.ones((batch_size, time_steps, time_steps)), k=time_window).astype('uint8'))
     mask = upper_mask + lower_mask.transpose(1, 2)
-    return mask.repeat(1, 1, edge_types + 1)
+    return mask
 
 
 def get_temperature(max_temp, min_temp, decadicy_iteration, total_iterations=None):
@@ -113,22 +113,21 @@ def sample_gumbel(shape, eps=1e-20):
 
 
 def get_embeddings(data_dir, prefix=""):
-    use_cuda = torch.cuda.is_available()
 
-    input_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "input_embeddings.bin"), "rb"))
-    target_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "target_embeddings.bin"), "rb"))
-    neighbor_embeddings = pickle.load(open(os.path.join(data_dir, prefix + "neighbor_embeddings.bin"), "rb"))
 
-    if use_cuda:
-        input_embeddings = input_embeddings.cuda()
-        target_embeddings = target_embeddings.cuda()
-        neighbor_embeddings = neighbor_embeddings.cuda()
+    input_embeddings = torch.load(os.path.join(data_dir, prefix + "input_embeddings.pt"))
+    target_embeddings = torch.load(os.path.join(data_dir, prefix + "target_embeddings.pt"))
+    neighbor_embeddings = torch.load(os.path.join(data_dir, prefix + "neighbor_embeddings.pt"))
+    mask_neighbor = torch.load(os.path.join(data_dir, prefix + "mask_neighbor.pt"))
+    edge_type = torch.load(os.path.join(data_dir, prefix + "edge_type.pt"))
 
 
     if target_embeddings.dim() == 2:
         target_embeddings = target_embeddings.unsqueeze(-1)
 
-    return input_embeddings, target_embeddings, neighbor_embeddings, None
+
+
+    return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, mask_neighbor
 
 
 def get_customer_embeddings(data_dir, prefix=""):
@@ -172,7 +171,7 @@ def get_customer_embeddings(data_dir, prefix=""):
 
 class CustomDataset(Dataset):
     def __init__(self, base_path, file_name):
-        self.customers_list = torch.LongTensor(pickle.load(open(os.path.join(base_path, file_name), "rb")))
+        self.customers_list = torch.LongTensor(torch.load(os.path.join(base_path, file_name)))
 
     def __len__(self):
         return len(self.customers_list)
@@ -198,9 +197,9 @@ class GumbelSoftmax(torch.nn.Module):
 
 
 class TempSoftmax(torch.nn.Module):
-    def __init__(self, temperature=1):
+    def __init__(self, temp):
         super(TempSoftmax, self).__init__()
-        self.temp = temperature
+        self.temp = temp
 
     def forward(self, input):
         x = input/self.temp

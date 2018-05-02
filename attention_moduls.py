@@ -54,22 +54,18 @@ class EdgeEncoder(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, n_head, hidden_dim, max_neighbors, time_steps, temperature=1, dropout=0):
+    def __init__(self, n_head, hidden_dim, temp=1, dropout=0):
         super(MultiHeadAttention, self).__init__()
 
         self.n_head = n_head
         self.hidden_dim = hidden_dim
-        self.max_neighbors = max_neighbors
-        self.time_steps = time_steps
-        self.temperature = temperature
-        self.softmax = TempSoftmax(temperature)
-        # self.softmax = nn.Softmax(dim=-1)
+        self.softmax = TempSoftmax(temp)
         self.dropout = nn.Dropout(dropout)
         self.prj = nn.Linear(hidden_dim * n_head, hidden_dim)
 
 
 
-    def forward(self, q, k, v, batch_size, attn_mask=None):
+    def forward(self, q, k, v, batch_size, attn_mask):
         S = torch.bmm(q, k.transpose(1, 2))
 
         if attn_mask is not None:
@@ -118,27 +114,25 @@ class FeatureMultiHeadAttention(nn.Module):
 
 
 class TransformerLayer(nn.Module):
-    def __init__(self, n_head, input_dim, hidden_dim, component_num, time_steps, temperature=1, dropout=0):
+    def __init__(self, n_head, input_dim, hidden_dim, temperature=1, dropout=0):
         super(TransformerLayer, self).__init__()
         self.name = "_TransformerAttention"
         self.n_head = n_head
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
-        self.component_num = component_num
-        self.time_steps = time_steps
 
 
         self.w_qs = nn.Parameter(torch.FloatTensor(n_head, input_dim, hidden_dim))
         self.w_ks = nn.Parameter(torch.FloatTensor(n_head, input_dim, hidden_dim))
         self.w_vs = nn.Parameter(torch.FloatTensor(n_head, input_dim, hidden_dim))
 
-        self.slf_attn = MultiHeadAttention(n_head, hidden_dim, component_num, time_steps, temperature=temperature, dropout=dropout)
+        self.slf_attn = MultiHeadAttention(n_head, hidden_dim, temp=temperature, dropout=dropout)
         self.layer_norm = LayerNorm(hidden_dim)
 
 
 
-    def forward(self, node_enc, neigh_enc, attn_mask=None):
-        batch_size = node_enc.size(0)
+    def forward(self, node_enc, neigh_enc, attn_mask):
+        batch_size, neigh_number, time_steps, input_dim = neigh_enc.size()
 
         q = node_enc
         k = torch.cat((node_enc, torch.cat(torch.split(neigh_enc, 1, dim=1), dim=2)[:, 0]), dim=1)
@@ -147,12 +141,13 @@ class TransformerLayer(nn.Module):
         q_s = q.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.input_dim)  # n_head x (mb_size*len_q) x d_model
         k_s = k.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.input_dim)  # n_head x (mb_size*len_k) x d_model
         v_s = v.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.input_dim)  # n_head x (mb_size*len_v) x d_model
+        attn_mask = attn_mask.repeat(self.n_head, 1, 1)
 
-        q_s = torch.bmm(q_s, self.w_qs).view(-1, self.time_steps, self.hidden_dim)  # (n_head*mb_size) x seq_le x hidden_dim
+        q_s = torch.bmm(q_s, self.w_qs).view(self.n_head * batch_size, -1, self.hidden_dim)  # (n_head*mb_size) x seq_le x hidden_dim
         k_s = torch.bmm(k_s, self.w_ks).view(self.n_head * batch_size, -1, self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
         v_s = torch.bmm(v_s, self.w_vs).view(self.n_head * batch_size, -1, self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
 
-        output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask.repeat(self.n_head, 1, 1))
+        output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, attn_mask=attn_mask)
         output = self.layer_norm(output + node_enc)
         # output = output + node_enc
 
