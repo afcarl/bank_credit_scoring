@@ -217,8 +217,8 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 if __name__ == "__main__":
     input_embeddings, target_embeddings, neighbor_embeddings, edge_type, mask_neigh, prefix = generate_noise_embedding((12000, 10), 4,
-                                                                                                randomize_neighbors=True,
-                                                                                                dynamic_num_neighbors=True)
+                                                                                                randomize_neighbors=False,
+                                                                                                dynamic_num_neighbors=False)
 
     torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.pt")))
     torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, prefix + "_target_embeddings.pt")))

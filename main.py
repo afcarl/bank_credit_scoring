@@ -13,7 +13,7 @@ import pickle
 
 
 
-vis = visdom.Visdom(port=8098)
+vis = visdom.Visdom(port=8080)
 EXP_NAME = "exp-{}".format(datetime.now())
 
 
@@ -22,9 +22,9 @@ def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
     parser.add_argument("--dataset_prefix", type=str, default="simple_random_dynamic_", help="Prefix for the dataset")
-    parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.pt", help="Train file name")
-    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.pt", help="Eval file name")
-    parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.pt", help="Test file name")
+    parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
+    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
+    parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
 
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
@@ -36,7 +36,7 @@ def __pars_args__():
     parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
-    parser.add_argument('--temp', type=float, default=0.6, help="Softmax temperature")
+    parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
     parser.add_argument('--n_head', type=int, default=4, help="attention head number")
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
@@ -54,7 +54,7 @@ def __pars_args__():
 if __name__ == "__main__":
     args = __pars_args__()
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = RNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
+    model = TranslatorJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
 
     train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
     eval_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
@@ -107,7 +107,7 @@ if __name__ == "__main__":
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
 
-            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "saved_eval_iter_{}.bin".format(int(i_iter/args.eval_step)))), "wb"))
+            pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "{}saved_eval_iter-{}_temp-{}.bin".format(args.dataset_prefix, int(i_iter/args.eval_step), args.temp))), "wb"))
 
             if best_model > iter_eval:
                 print("save best model")
@@ -120,4 +120,4 @@ if __name__ == "__main__":
     iter_test, saved_weights = eval_fn(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
-        path_join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))
+        path_join(args.data_dir, model.name, "{}saved_test_temp-{}.bin".format(args.dataset_prefix, args.temp))), "wb"))

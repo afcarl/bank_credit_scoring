@@ -7,7 +7,7 @@ from helper import get_time_mask
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neigh):
         _loss = 0
@@ -40,7 +40,7 @@ def setup_model(model, batch_size, args, is_training=True):
             else:
                 model.eval()
 
-            predict, node_node_interaction = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden,
+            predict, neigh_neigh_attention, node_neigh_attention = model.forward(b_input_sequence, b_neighbors_sequence, node_hidden, neighbor_hidden,
                                                                        b_edge_types, b_mask_neigh, b_mask_time, b_target_sequence)
 
             if is_training:
@@ -71,7 +71,8 @@ def setup_model(model, batch_size, args, is_training=True):
                 for row, idx in enumerate(b_index):
                     saved_weights[idx] = dict(
                         id=idx,
-                        node_node_interaction=node_node_interaction[row].cpu(),
+                        neigh_neigh_attention=neigh_neigh_attention[row].cpu(),
+                        node_neigh_attention=node_neigh_attention[row].cpu(),
                         input=b_input_sequence[row],
                         target=b_target_sequence[row],
                         neighbors=b_neighbors_sequence[row].squeeze(),

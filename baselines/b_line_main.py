@@ -19,19 +19,18 @@ EXP_NAME = "exp-{}".format(datetime.now())
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path.join("..", "data", "customers"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
-    parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset.bin", help="Train file name")
-    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset.bin", help="Eval file name")
-    parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset.bin", help="Test file name")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path.join("..", "data", "sintetic"), help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
+    parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
+    parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
+    parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
 
     parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
-    parser.add_argument("--is_supervised", "-supervised", type=bool, default=True, help="is supervised training edge type")
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=932, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
+    parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0., help="Keep probability for dropout.")
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=10, help='Max number of neighbors.')
@@ -51,7 +50,7 @@ def setup_model(model, batch_size, args, is_training=True):
     else:
         optimizer = None
 
-    def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, edge_types):
+    def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neigh):
         _loss = 0
         saved_weights = {}
 
@@ -59,14 +58,15 @@ def setup_model(model, batch_size, args, is_training=True):
             b_input_sequence = Variable(input_embeddings[b_index])
             b_target_sequence = Variable(target_embeddings[b_index])
             b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
-            b_edge_types = Variable(edge_types[b_index]) if args.is_supervised else None
+            b_edge_types = Variable(edge_types[b_index])
+            b_mask_neigh = Variable(mask_neigh[b_index])
 
             if args.use_cuda:
                 b_input_sequence = b_input_sequence.cuda()
                 b_target_sequence = b_target_sequence.cuda()
                 b_neighbors_sequence = b_neighbors_sequence.cuda()
-                b_edge_types = b_edge_types.cuda() if args.is_supervised else None
-
+                b_edge_types = b_edge_types.cuda()
+                b_mask_neigh = mask_neigh[b_index]
 
             node_hidden = model.init_hidden(batch_size)
             neighbor_hidden = model.init_hidden(batch_size)
@@ -77,7 +77,7 @@ def setup_model(model, batch_size, args, is_training=True):
             else:
                 model.eval()
 
-            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_edge_types, args.is_supervised)
+            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_edge_types, b_mask_neigh)
 
             if is_training:
                 loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
@@ -118,9 +118,8 @@ def setup_model(model, batch_size, args, is_training=True):
 if __name__ == "__main__":
     args = __pars_args__()
 
-    input_embeddings, target_embeddings, neighbor_embeddings, edge_types = get_customer_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = NodeInterpolation(args.input_dim, args.hidden_size, args.output_size,
-                      neighbor_embeddings.size(1), edge_types.size(-1), input_embeddings.size(1), dropout_prob=args.drop_prob)
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
+    model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
 
     model.reset_parameters()
 
@@ -132,7 +131,6 @@ if __name__ == "__main__":
                                   drop_last=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=1,
                                  drop_last=True)
-
     test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=1,
                                  drop_last=True)
 
@@ -148,7 +146,7 @@ if __name__ == "__main__":
     best_model = float("infinity")
 
     for i_iter in range(args.n_iter):
-        iter_loss, _ = train(train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types)
+        iter_loss, _ = train(train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
         total_loss.append(iter_loss)
         print(iter_loss)
 
@@ -163,7 +161,7 @@ if __name__ == "__main__":
             win="win:train-{}".format(EXP_NAME))
 
         if i_iter % args.eval_step == 0:
-            iter_eval, saved_weights = eval(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types)
+            iter_eval, saved_weights = eval(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
             eval_loss.append(iter_eval)
             vis.line(
                 Y=torch.FloatTensor(eval_loss),
@@ -186,7 +184,7 @@ if __name__ == "__main__":
     model = torch.load(path.join(args.data_dir, "{}.pt".format(model.name)))
 
     test = setup_model(model, args.eval_batch_size, args, is_training=False)
-    iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types)
+    iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
         path.join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))

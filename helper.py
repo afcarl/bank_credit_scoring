@@ -170,8 +170,8 @@ def get_customer_embeddings(data_dir, prefix=""):
 
 
 class CustomDataset(Dataset):
-    def __init__(self, base_path, file_name):
-        self.customers_list = torch.LongTensor(torch.load(os.path.join(base_path, file_name)))
+    def __init__(self, base_path, file_name, extension="pt"):
+        self.customers_list = torch.LongTensor(torch.load(os.path.join(base_path, "{}.{}".format(file_name, extension))))
 
     def __len__(self):
         return len(self.customers_list)
@@ -209,19 +209,16 @@ class TempSoftmax(torch.nn.Module):
 class PositionwiseFeedForward(torch.nn.Module):
     ''' A two-feed-forward-layer module '''
 
-    def __init__(self, d_hid, d_inner_hid, dropout=0.1):
+    def __init__(self, d_hid, d_inner_hid):
         super(PositionwiseFeedForward, self).__init__()
         self.w_1 = torch.nn.Conv1d(d_hid, d_inner_hid, 1) # position-wise
         self.w_2 = torch.nn.Conv1d(d_inner_hid, d_hid, 1) # position-wise
         self.layer_norm = LayerNorm(d_hid)
-        self.dropout = torch.nn.Dropout(dropout)
-        self.relu = torch.nn.ReLU()
 
     def forward(self, x):
         residual = x
         output = self.w_1(x.transpose(1, 2))
         output = self.w_2(output).transpose(2, 1)
-        output = self.dropout(output)
         return self.layer_norm(output + residual)
 
 
