@@ -76,7 +76,7 @@ def download_lat_lng(stations, aut_data):
     down_data = pd.DataFrame.from_dict(add_data, orient="index")
     down_data.to_csv(path.join(BASE_DIR, "lat_lng.csv"))
 
-def download_traffic(stations, auth_data, auth_base='http://pems.dot.ca.gov/', time_interval=[(1522627200, 1523059200),
+def download_traffic(stations_id, auth_data, auth_base='http://pems.dot.ca.gov/', time_interval=[(1522627200, 1523059200),
                                                                                              (1523232000, 1523664000),
                                                                                              (1523836800, 1524268800),
                                                                                              (1524441600, 1524873600)]):
@@ -84,7 +84,7 @@ def download_traffic(stations, auth_data, auth_base='http://pems.dot.ca.gov/', t
     with session() as c:
         c.post(auth_base, data=auth_data)
 
-        for i, station_id in enumerate(stations.index):
+        for i, station_id in enumerate(stations_id):
             ts = 10  # Default time to sleep
             print("Iteration: {}".format(i))
             print('initial time to sleep {}'.format(ts))
@@ -127,7 +127,8 @@ def execute():
         'username': UserName,
         'password': Pass
     }
-    download_traffic(stations, auth_data)
+    stations_id = np.sort(stations.index.values)
+    download_traffic(stations_id[stations_id >= 402264], auth_data)
 
 if __name__ == "__main__":
     execute()
