@@ -167,7 +167,7 @@ class NodeNeighborsInterpolation(BaseNet):
 
 
 class NodeInterpolation(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, max_neighbors, num_edge_types, time_steps, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_edge_types, dropout_prob=0.1):
         super(NodeInterpolation, self).__init__()
         self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
                                       nn.Dropout(dropout_prob),
@@ -182,8 +182,6 @@ class NodeInterpolation(BaseNet):
         self.output_dim = output_dim
         self.nlayers = 0
         self.num_edge_types = num_edge_types
-        self.time_steps = time_steps
-        self.max_neighbors = max_neighbors
         self.criterion = nn.MSELoss()
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight):

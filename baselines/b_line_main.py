@@ -20,12 +20,12 @@ EXP_NAME = "exp-{}".format(datetime.now())
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default=path.join("..", "data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="noise_tr_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
 
-    parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
+    parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
@@ -46,7 +46,7 @@ def __pars_args__():
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=0.)
     else:
         optimizer = None
 
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     args = __pars_args__()
 
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
+    model = NodeNeighborsInterpolation(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
 
     model.reset_parameters()
 

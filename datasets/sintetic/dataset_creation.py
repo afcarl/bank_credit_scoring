@@ -32,6 +32,10 @@ def generate_triangular_embedding(dim, num_neighbors):
     neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
     target_embeddings = torch.FloatTensor(dim[0], dim[1], 1).zero_()
 
+    edge_type = torch.ones(dim[0], num_neighbors, dim[1], 1)
+    neigh_mask = torch.zeros(dim[0], num_neighbors)
+
+
     for idx in range(dim[0]):
         input_embedding = triangle2(2*dim[1], amplitude=amplitudes[idx])
         input_embedding += np.random.randint(-2, 2, 1)
@@ -44,7 +48,7 @@ def generate_triangular_embedding(dim, num_neighbors):
         for n_idx in range(num_neighbors):
             neighbor_embeddings[idx, n_idx] = torch.from_numpy(n_embedding[n_idx, neighbors_split_offset:neighbors_split_offset+10].astype(np.int32)).float()
         target_embeddings[idx] = torch.from_numpy(input_embedding[split_point+1:split_point+dim[1]+1])
-    return input_embeddings, target_embeddings, neighbor_embeddings, "tr"
+    return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask.byte(), "tr"
 
 def generate_noise_triangular_embedding(dim, num_neighbors):
     amplitudes = torch.Tensor(dim[0]).uniform_(5, 10).int().float()
@@ -52,6 +56,10 @@ def generate_noise_triangular_embedding(dim, num_neighbors):
     input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).zero_()
     neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
     target_embeddings = torch.FloatTensor(dim[0], dim[1], 1).zero_()
+
+    edge_type = torch.ones(dim[0], num_neighbors, dim[1], 1)
+    neigh_mask = torch.zeros(dim[0], num_neighbors)
+
 
     for idx in range(dim[0]):
         input_embedding = triangle2(2*dim[1], amplitude=amplitudes[idx])
@@ -62,32 +70,15 @@ def generate_noise_triangular_embedding(dim, num_neighbors):
         neighbors_multiply_offset = np.random.randint(1, 3, num_neighbors)
         input_embeddings[idx] = torch.from_numpy(input_embedding[split_point:split_point+dim[1]])
         n_embedding = np.matmul(np.expand_dims(input_embedding, axis=-1), np.expand_dims(neighbors_multiply_offset, axis=0)).T
+
         for n_idx in range(num_neighbors - 2):
             neighbor_embeddings[idx, n_idx] = torch.from_numpy(n_embedding[n_idx, neighbors_split_offset:neighbors_split_offset+10].astype(np.int32)).float()
-        neighbor_embeddings[idx, -2] = torch.FloatTensor(dim[1], 1).uniform_(-10, 10)
+
+        neighbor_embeddings[idx, -2:] = torch.FloatTensor(dim[1], 2).uniform_(-10, 10).long().float()
         target_embeddings[idx] = torch.from_numpy(input_embedding[split_point+1:split_point+dim[1]+1])
-    return input_embeddings, target_embeddings, neighbor_embeddings, "noise_tr"
 
+    return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask.byte(), "noise_tr"
 
-def generate_noise_embedding(dim, num_neighbors, offset_sampler = torch.distributions.Categorical(torch.Tensor([ 0.25, 0.25, 0.25]))):
-    input_embeddings = torch.FloatTensor(dim[0], dim[1], 1).uniform_(0, 10).int().float()
-    input_embeddings, _ = torch.sort(input_embeddings, 1)
-    neighbor_embeddings = torch.FloatTensor(dim[0], num_neighbors, dim[1], 1).zero_()
-    target_embeddings = torch.FloatTensor(dim[0], dim[1]).zero_()
-
-    for idx in range(input_embeddings.size(0)):
-        n_embedding = torch.FloatTensor(num_neighbors, dim[1], 1).zero_()
-        n_embedding[0] = input_embeddings[idx]
-        n_embedding[-1] = torch.FloatTensor(dim[1], 1).uniform_(0, 10)
-        n_embedding[1:-1] = input_embeddings[idx].repeat(2, 1, 1) + offset_sampler.sample(sample_shape=(2, 1, 1)).float()
-        neighbor_embeddings[idx] = n_embedding.int().float()
-        target_embeddings[idx] = torch.sum(torch.cat((input_embeddings[idx].unsqueeze(0), n_embedding[:-1]), dim=0), dim=0)
-        # if input_embeddings[idx, -1, 0] >= 5:
-        #     target_embeddings[idx] = torch.mean(n_embedding[int(num_neighbors/2):, -1])
-        # else:
-        #     target_embeddings[idx] = torch.mean(n_embedding[:int(num_neighbors/2), -1])
-
-    return input_embeddings, target_embeddings, neighbor_embeddings, "simple"
 
 
 def generate_noise_embedding(dim, max_num_neighbors,
@@ -216,9 +207,7 @@ def split_training_test_dataset(_ids, e_t_size=25000):
 
 
 if __name__ == "__main__":
-    input_embeddings, target_embeddings, neighbor_embeddings, edge_type, mask_neigh, prefix = generate_noise_embedding((12000, 10), 4,
-                                                                                                randomize_neighbors=False,
-                                                                                                dynamic_num_neighbors=False)
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_type, mask_neigh, prefix = generate_noise_triangular_embedding((12000, 10), 4)
 
     torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, prefix+"_input_embeddings.pt")))
     torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, prefix + "_target_embeddings.pt")))

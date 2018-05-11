@@ -12,7 +12,7 @@ import copy
 from functools import reduce
 BASE_DIR = "../../data"
 DATASET = "sintetic"
-MODEL = "RNN_TransformerAttention"
+MODEL = "Jordan_RNN_FeatureTransformerAttention"
 
 Axes_data = collections.namedtuple("Axes_data", "val name")
 
@@ -123,7 +123,7 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "simple_random_dynamic_saved_eval_iter-10_temp-0.45.bin"), "rb"))
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "noise_tr_saved_test_temp-0.45.bin"), "rb"))
     for example_id, example in examples.items():
 
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))

@@ -252,14 +252,17 @@ class JordanRNNJointAttention(BaseNet):
         super(JordanRNNJointAttention, self).__init__()
 
         self.NodeRNN = nn.GRUCell(input_dim+3, hidden_dim)
-        self.NodeRNN_trans = nn.Sequential(nn.Dropout(dropout_prob),
-                                           nn.ELU())
+        self.NodeRNN_trans = nn.Sequential(nn.ELU(),
+                                           nn.Dropout(dropout_prob))
 
-        self.NeighborRNN = nn.GRUCell(input_dim, hidden_dim)
-        self.NeighborRNN_trans = nn.Sequential(nn.Dropout(dropout_prob),
-                                               nn.ELU())
+        self.NeighborRNN = nn.GRUCell(input_dim*2, hidden_dim)
+        self.NeighborRNN_trans = nn.Sequential(nn.ELU(),
+                                               nn.Dropout(dropout_prob))
 
-        self.attention = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, temperature=temperature, dropout=dropout_prob)
+        self.neigh_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
+        self.node_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=1,
+                                                       dropout=dropout_prob)
+
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
             # nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
@@ -267,7 +270,7 @@ class JordanRNNJointAttention(BaseNet):
             #                      nn.Dropout(dropout_prob),
             #                      nn.Linear(hidden_dim // 2, output_dim))
 
-        self.name = "Jordan_RNN" + self.attention.name
+        self.name = "Jordan_RNN" + self.neigh_neigh_interaction.name
 
 
         self.input_dim = input_dim
@@ -283,42 +286,56 @@ class JordanRNNJointAttention(BaseNet):
         use_cuda = next(self.parameters()).is_cuda
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
 
-        neighbors_input = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
+
+
         node_output = Variable(torch.FloatTensor(batch_size, time_steps, self.hidden_dim).zero_())
         neighbors_output = Variable(torch.FloatTensor(batch_size, neigh_number, time_steps, self.hidden_dim).zero_())
+        neigh_neigh_outputs = Variable(torch.FloatTensor(batch_size, time_steps, self.hidden_dim).zero_())
         outputs = Variable(torch.FloatTensor(batch_size, time_steps, self.output_dim).zero_())
         rec_outputs = Variable(torch.FloatTensor(batch_size, time_steps, 3).zero_())
-        attentions = torch.FloatTensor(batch_size, time_steps, (neigh_number+1) * time_steps).zero_()
+        neigh_neigh_attentions = torch.FloatTensor(batch_size, time_steps, (neigh_number) * time_steps).zero_()
+        node_neigh_attentions = torch.FloatTensor(batch_size, time_steps, 2 * time_steps).zero_()
 
         if use_cuda:
             node_output = node_output.cuda()
             neighbors_output = neighbors_output.cuda()
+            neigh_neigh_outputs = neigh_neigh_outputs.cuda()
             outputs = outputs.cuda()
             rec_outputs = rec_outputs.cuda()
-            attentions = attentions.cuda()
+            neigh_neigh_attentions = neigh_neigh_attentions.cuda()
+            node_neigh_attentions = node_neigh_attentions.cuda()
 
         att_mask = mask_time.unsqueeze(-2).repeat(1, 1, neigh_number, 1)
         mask_neight = mask_neight.unsqueeze(-2).unsqueeze(-1).repeat(1, time_steps, 1, time_steps)
-        att_mask = att_mask.masked_fill_(mask_neight, 1).view(batch_size, time_steps, -1)
-        att_mask = torch.cat((mask_time, att_mask), dim=-1)
+        neighs_neighs_att_mask = att_mask.masked_fill_(mask_neight, 1).view(batch_size, time_steps, -1)
 
+        node_neigh_att_mask = mask_time.repeat(1, 1, 2)
+
+        neighbors_input_ = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
+        neighbors_input_ = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input_), dim=-1)
 
         for i in range(time_steps):
             node_hidden = self.NodeRNN(torch.cat((node_input[:, i], rec_outputs[:, i]), dim=-1), node_hidden)
             node_enc = self.NodeRNN_trans(node_hidden)
             node_output[:, i] = node_enc
 
-            neighbors_hidden = self.NeighborRNN(neighbors_input[:, i], neighbors_hidden)
+
+
+            neighbors_hidden = self.NeighborRNN(neighbors_input_[:, i], neighbors_hidden)
             neighbors_enc = self.NeighborRNN_trans(neighbors_hidden)
             neighbors_enc = torch.stack(torch.chunk(neighbors_enc, neigh_number, dim=0), dim=1)
             neighbors_output[:, :, i] = neighbors_enc
 
+            neighbors_interaction, neigh_neigh_attention = self.neigh_neigh_interaction(node_output, neighbors_output, i, neighs_neighs_att_mask)
+            neigh_neigh_outputs[:, i] = neighbors_interaction
+            neigh_neigh_attentions[:, i] = neigh_neigh_attention.squeeze()
 
-            output, attention = self.attention(node_output, neighbors_output, i, att_mask)
+            output, node_neigh_attention = self.node_neigh_interaction(node_output, neigh_neigh_outputs, i, node_neigh_att_mask)
             output = self.prj(output)
-
             outputs[:, i] = output
-            attentions[:, i] = attention.squeeze()
+            node_neigh_attentions[:, i] = node_neigh_attention.squeeze()
+
+
 
             # external recurrent connection
             upper_bound = i+1
@@ -329,7 +346,7 @@ class JordanRNNJointAttention(BaseNet):
             elif i < time_steps-1:
                 rec_outputs[:, i+1] = diff
 
-        return outputs, attentions
+        return outputs, neigh_neigh_attentions, node_neigh_attentions
 
     def reset_parameters(self):
         for p in self.parameters():
@@ -337,7 +354,8 @@ class JordanRNNJointAttention(BaseNet):
                 p.data.fill_(0)
             else:
                 torch.nn.init.xavier_normal(p.data)
-        self.attention.layer_norm.gamma.data.fill_(1)
+        self.neigh_neigh_interaction.layer_norm.gamma.data.fill_(1)
+        self.node_neigh_interaction.layer_norm.gamma.data.fill_(1)
 
     def init_hidden(self, batch_size):
         """
