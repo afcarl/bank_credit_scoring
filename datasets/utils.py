@@ -5,7 +5,6 @@ import json
 import numpy as np
 import pandas as pd
 from collections import namedtuple
-import quandl
 from os.path import join
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
