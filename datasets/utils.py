@@ -76,15 +76,21 @@ class MyBidict(object):
         return sorted(self.d.keys())
 
 
-def one_hot_conversion(values):
-    encoder = LabelEncoder()
+def one_hot_conversion(values, label_encoder=None, one_hot_encoder=None):
     if type(values) == list:
         values = np.array(values)
 
-    values_encoded = encoder.fit_transform(values)
-
-    onehot_encoder = OneHotEncoder(sparse=False)
+    if label_encoder == None:
+        label_encoder = LabelEncoder()
+        values_encoded = label_encoder.fit_transform(values)
+    else:
+        values_encoded = label_encoder.transform(values)
     values_encoded = values_encoded.reshape(len(values_encoded), 1)
-    one_hot_encoded = onehot_encoder.fit_transform(values_encoded)
 
-    return one_hot_encoded, encoder
+    if one_hot_encoder == None:
+        one_hot_encoder = OneHotEncoder(sparse=False)
+        one_hot_encoded = one_hot_encoder.fit_transform(values_encoded)
+    else:
+        one_hot_encoded = one_hot_encoder.transform(values_encoded)
+
+    return one_hot_encoded, label_encoder, one_hot_encoder

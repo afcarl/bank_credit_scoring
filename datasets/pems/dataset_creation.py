@@ -8,12 +8,17 @@ import torch
 import networkx as nx
 from geopy.distance import geodesic
 import numpy as np
+from functools import partial
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from helper import ensure_dir
 
 softplus = lambda x: np.log(1 + np.exp(x))
 start_dif = lambda x: x.div(x.iloc[0]) - 1
 softlog = lambda x: np.log(x + 1)
 identity = lambda x: x
+
+
+
 
 def setup_norm(type="softlog"):
     if type == "start_dif":
@@ -95,35 +100,90 @@ def resample_dataframe(station_dataframe, resample_interval="10T"):
     :param station_dataframe: 
     :return: 
     """
+
+    def round(t, freq):
+        freq = pd.tseries.frequencies.to_offset(freq)
+        return pd.Timestamp((t.value // freq.delta.value) * freq.delta.value)
+
+
     def agg_fn(data):
         if data.name == "Flow (Veh/5 Minutes)":
-            data = data.mean()
-        else:
             data = data.sum()
+        else:
+            data = data.mean()
         return data
 
-    station_dataframe = station_dataframe.resample(resample_interval).apply(agg_fn)
+    station_dataframe = station_dataframe.groupby(partial(round, freq=resample_interval)).apply(agg_fn)
+    scalar = MinMaxScaler()
+    station_dataframe = pd.DataFrame(scalar.fit_transform(station_dataframe), columns=station_dataframe.columns, index=station_dataframe.index)
     return station_dataframe
 
+def get_days_datapoints(station_data):
+    """
+    get the timestemp of each day
+    :param station_data: 
+    :return: 
+    """
+    days_groups = station_data.groupby(station_data.index.day)
+    return [v if len(v) > 0 else None for k,v in sorted(days_groups.groups.items(), key=lambda x: x[0])]
 
-def generate_embedding(G, features_len=35, top_k=6):
-    station_id_to_id = bidict()
+
+def generate_one_hot_encoding(values):
+    """
+    generate the label and one_hot encoder for time features
+    :param values: 
+    :return: 
+    """
+    values_encoded, label_encoder, one_hot_encoder = one_hot_conversion(values)
+    return values_encoded, label_encoder, one_hot_encoder
+
+
+
+def generate_embedding(G, top_k=6):
+    station_id_to_idx = bidict()
     station_id_to_exp_idx = MyBidict()
 
     station_id = 400000
     station_data = read_station_data(station_id)
     station_data = resample_dataframe(station_data)
-    days_groups = station_data.groupby(station_data.index.day)
-    station_data.loc[days_groups.groups[2]]
+    days_groups = get_days_datapoints(station_data)
 
+    # one hot encoders
+    _, day_label_encoder, day_one_hot_encoder = generate_one_hot_encoding(station_data.index.day)
+    _, hour_label_encoder, hour_one_hot_encoder = generate_one_hot_encoding(station_data.index.hour)
+    _, minutes_label_encoder, minutes_one_hot_encoder = generate_one_hot_encoding(station_data.index.minute)
 
+    nodes = list(filter(lambda x: type(x) == int, G.nodes))
+    num_exp = day_one_hot_encoder.active_features_.size
+    seq_len = days_groups[0].size
+    features_len = 4 + day_one_hot_encoder.active_features_.size + hour_one_hot_encoder.active_features_.size + minutes_one_hot_encoder.active_features_.size
 
-    for node_idx, node in enumerate(G.nodes()):
-        node_data = read_station_data(node)
-        neighbor_data = [read_station_data(neigbor) for neigbor in G.neighbors(node)]
-        pd.concat()
+    input_embeddings = torch.FloatTensor(num_exp * len(nodes), seq_len, features_len).zero_()
+    target_embeddings = torch.FloatTensor(num_exp * len(nodes), seq_len, 1).zero_()
+    neighbor_embeddings = torch.FloatTensor(num_exp * len(nodes), top_k, seq_len, features_len).zero_()
+    edge_type = torch.ones(num_exp * len(nodes), top_k, seq_len, 1)
+    neigh_mask = torch.zeros(num_exp * len(nodes), top_k).byte()
 
-            neighbor_data = read_station_data(neigbor)
+    nodes_data = {}
+    for node_idx, node in enumerate(nodes):
+        if node in nodes_data:
+            node_data = nodes_data[node]
+        else:
+            node_data = read_station_data(node)
+            node_data = resample_dataframe(node_data)
+            nodes_data[node] = node_data
+
+        neighbors_data = []
+        for neighbor in G.neighbors(node):
+            if neighbor in nodes_data:
+                neighbor_data = nodes_data[neighbor]
+            else:
+                neighbor_data = read_station_data(neighbor)
+                neighbor_data = resample_dataframe(neighbor_data)
+                nodes_data[neighbor] = neighbor_data
+            neighbors_data.append(neighbors_data)
+
+        station_id_to_idx[node] = node_idx
 
     num_exp = (sites_df.shape[0] - 1) // seq_len
 
@@ -135,9 +195,6 @@ def generate_embedding(G, features_len=35, top_k=6):
         site_to_id[site] = len(site_to_id) + 1
 
     # resample by each day
-    input_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), seq_len, features_len).zero_()
-    target_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), seq_len, 1).zero_()
-    neighbor_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), top_k,  seq_len, features_len).zero_()
 
     for site, site_id in site_to_id.items():
         site_df = sites_df.loc[:, pd.IndexSlice[site]]
