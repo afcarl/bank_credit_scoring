@@ -12,7 +12,8 @@ from numpy import array, arange, exp, log, nan
 
 TRAIN = [6, 8, 25, 29, 44, 45, 55, 78, 9, 12, 13, 41, 88, 99, 100, 101, 103, 109, 111, 116, 136, 281, 285, 304, 339, 341, 363, 366, 391, 399, 690, 716, 765, 648, 654, 673, 674, 697, 703, 718, 731, 737, 742, 887, 767, 808, 32, 42, 14, 137, 236, 22, 56,  31, 36]
 EVAL = [10, 49, 41, 30, 144, 153, 186, 197, 213, 88, 214, 400, 401, 404, 427, 454, 455, 472, 761, 744, 745, 766, 384, 755]
-TEST = [21, 51, 65, 217, 218, 224, 228, 259, 270, 275, 92, 474, 475, 478, 484, 492, 496, 512, 472, 832, 771, 786, 805, 386]
+# TEST = [21, 51, 65, 217, 218, 224, 228, 259, 270, 275, 92, 474, 475, 478, 484, 492, 496, 512, 472, 832, 771, 786, 805, 386]
+TEST = [10, 21, 30, 41, 49, 51, 65, 88, 92, 144, 153, 186, 197, 213, 214, 217, 218, 224, 228, 259, 270, 275, 384, 386, 400, 401, 404, 427, 454, 455, 472, 474, 475, 478, 484, 492, 496, 512, 744, 745, 755, 761, 766, 771, 786, 805, 832]
 KEYS = ["Open", "High", "Low", "Close", "Volume"]
 remove_space = lambda x: re.sub('\s', '', x)
 
@@ -76,7 +77,7 @@ def convert_attribute(sites_attribute):
 
     return ret, sector_encoder, tz_encoder
 
-def load_data(site_infos, resample_interval="180T", norm_type="softplus"):
+def load_data(site_infos, resample_interval="180T", norm_type="softlog"):
     """
     load the data in a pandas datafra
     1) read the attribute
@@ -278,12 +279,12 @@ def split_training_test_dataset(site_to_idx, site_to_exp_idx):
 
 if __name__ == "__main__":
     meta_infos, sites_info = read_costituents()
-    # sites_normalized_dataframe, days_onehot, tz_onehot = load_data(sites_info)
-    #
-    # pickle.dump(sites_normalized_dataframe, open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "wb"))
-    # pickle.dump(days_onehot, open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "wb"))
-    # pickle.dump(compute_top_correlated(sites_info, 4), open(path.join(BASE_DIR, "utility", "temp", "neighbors.bin"), "wb"))
-    # pickle.dump(tz_onehot, open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "wb"))
+    sites_normalized_dataframe, days_onehot, tz_onehot = load_data(sites_info)
+
+    pickle.dump(sites_normalized_dataframe, open(path.join(BASE_DIR, "utility", "temp", "norm_dataframe.bin"), "wb"))
+    pickle.dump(days_onehot, open(path.join(BASE_DIR, "utility", "temp", "days_onehot.bin"), "wb"))
+    pickle.dump(compute_top_correlated(sites_info, 4), open(path.join(BASE_DIR, "utility", "temp", "neighbors.bin"), "wb"))
+    pickle.dump(tz_onehot, open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "wb"))
     # pickle.dump(start_values, open(path.join(BASE_DIR, "utility", "temp", "start_values.bin"), "wb"))
 
 
@@ -309,6 +310,8 @@ if __name__ == "__main__":
     torch.save(site_to_idx, ensure_dir(path.join(BASE_DIR, "utility", "site_to_idx.pt")))
     torch.save(site_to_exp_idx, ensure_dir(path.join(BASE_DIR, "utility", "site_to_exp_idx.pt")))
 
+    site_to_idx = torch.load(path.join(BASE_DIR, "utility", "site_to_idx.pt"))
+    site_to_exp_idx = torch.load(path.join(BASE_DIR, "utility", "site_to_exp_idx.pt"))
 
     train_dataset, eval_dataset, test_dataset = split_training_test_dataset(site_to_idx, site_to_exp_idx)
 

@@ -61,7 +61,7 @@ if __name__ == "__main__":
     test_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.test_file_name)
 
 
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1, drop_last=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, drop_last=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=1, drop_last=True)
     test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=1, drop_last=True)
 
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     # test performance
     model = torch.load(path_join(args.data_dir, "{}.pt".format(model.name)))
 
-    iter_test, saved_weights = eval_fn(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
+    iter_test, saved_weights = eval_fn(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
         path_join(args.data_dir, model.name, "{}saved_test_temp-{}.bin".format(args.dataset_prefix, args.temp))), "wb"))

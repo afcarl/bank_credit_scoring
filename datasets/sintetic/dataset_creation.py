@@ -95,8 +95,8 @@ def generate_noise_embedding(dim, max_num_neighbors,
     input_embeddings, _ = torch.sort(input_embeddings, 1)
     neighbor_embeddings = torch.FloatTensor(dim[0], max_num_neighbors, dim[1], 1).zero_()
     target_embeddings = torch.FloatTensor(dim[0], dim[1]).zero_()
-    edge_type = torch.ones(dim[0], max_num_neighbors, dim[1], 1)
-    neigh_mask = torch.zeros(dim[0], max_num_neighbors)
+
+
 
 
     for idx in range(input_embeddings.size(0)):
