@@ -5,8 +5,7 @@ import pandas as pd
 from collections import OrderedDict
 from bidict import bidict
 import torch
-import random
-import datetime as dt
+from helper import ensure_dir
 import re
 import geopy.distance
 from numpy import array, arange, exp, log, nan
@@ -197,6 +196,8 @@ def generate_embedding(sites_df, sites_attribute, sites_correlation, days_onehot
     input_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), seq_len, features_len).zero_()
     target_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), seq_len, 1).zero_()
     neighbor_embeddings = torch.FloatTensor(num_exp * (len(site_to_id) + 1), top_k,  seq_len, features_len).zero_()
+    edge_type = torch.ones(num_exp * (len(site_to_id) + 1), top_k, seq_len, 1)
+    neigh_mask = torch.zeros(num_exp * (len(site_to_id) + 1), top_k)
 
     for site, site_id in site_to_id.items():
         site_df = sites_df.loc[:, pd.IndexSlice[site]]
@@ -245,7 +246,7 @@ def generate_embedding(sites_df, sites_attribute, sites_correlation, days_onehot
         neighbor_embeddings[site_id * num_exp:(site_id + 1) * num_exp] = torch.stack(torch.split(n_embeddings, seq_len, dim=1), dim=0)
         site_id_to_exp_idx[site_id] = list(range(site_id * num_exp, (site_id + 1) * num_exp))
 
-    return input_embeddings, target_embeddings, neighbor_embeddings, site_to_id, site_id_to_exp_idx
+    return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask.byte(), site_to_id, site_id_to_exp_idx
 
 def split_training_test_dataset(site_to_idx, site_to_exp_idx):
     """
@@ -293,25 +294,27 @@ if __name__ == "__main__":
     tz_onehot = pickle.load(open(path.join(BASE_DIR, "utility", "temp", "tz_onehot.bin"), "rb"))
 
 
-    input_embeddings, target_embeddings, neighbor_embeddings, site_to_idx, site_to_exp_idx = generate_embedding(sites_normalized_dataframe,
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_types, neigh_mask, site_to_idx, site_to_exp_idx = generate_embedding(sites_normalized_dataframe,
                                                                                                                 sites_info,
                                                                                                                 sites_correlation,
                                                                                                                 days_onehot,
                                                                                                                 tz_onehot,
                                                                                                                 seq_len=16)
 
-    # pickle.dump(input_embeddings, open(path.join(BASE_DIR, "utility", "input_embeddings.bin"), "wb"))
-    # pickle.dump(target_embeddings, open(path.join(BASE_DIR, "utility", "target_embeddings.bin"), "wb"))
-    # pickle.dump(neighbor_embeddings, open(path.join(BASE_DIR, "utility", "neighbor_embeddings.bin"), "wb"))
-    # pickle.dump((site_to_idx), open(path.join(BASE_DIR, "utility", "site_to_idx.bin"), "wb"))
-    # pickle.dump((site_to_exp_idx), open(path.join(BASE_DIR, "utility", "site_to_exp_idx.bin"), "wb"))
+    torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "utility", "input_embeddings.pt")))
+    torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, "utility", "target_embeddings.pt")))
+    torch.save(neighbor_embeddings, ensure_dir(path.join(BASE_DIR, "utility", "neighbor_embeddings.pt")))
+    torch.save(edge_types, ensure_dir(path.join(BASE_DIR, "utility", "edge_type.pt")))
+    torch.save(neigh_mask, ensure_dir(path.join(BASE_DIR, "utility", "mask_neighbor.pt")))
+    torch.save(site_to_idx, ensure_dir(path.join(BASE_DIR, "utility", "site_to_idx.pt")))
+    torch.save(site_to_exp_idx, ensure_dir(path.join(BASE_DIR, "utility", "site_to_exp_idx.pt")))
 
 
     train_dataset, eval_dataset, test_dataset = split_training_test_dataset(site_to_idx, site_to_exp_idx)
 
-    pickle.dump(train_dataset, open(path.join(BASE_DIR, "utility", "train_dataset.bin"), "wb"))
-    pickle.dump(eval_dataset, open(path.join(BASE_DIR, "utility", "eval_dataset.bin"), "wb"))
-    pickle.dump(test_dataset, open(path.join(BASE_DIR, "utility", "test_dataset.bin"), "wb"))
+    torch.save(train_dataset, ensure_dir(path.join(BASE_DIR, "utility", "train_dataset.pt")))
+    torch.save(eval_dataset, ensure_dir(path.join(BASE_DIR, "utility", "eval_dataset.pt")))
+    torch.save(test_dataset, ensure_dir(path.join(BASE_DIR, "utility", "test_dataset.pt")))
 
 
 

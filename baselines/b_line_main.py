@@ -19,8 +19,8 @@ EXP_NAME = "exp-{}".format(datetime.now())
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path.join("..", "data", "sintetic"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="noise_tr_", help="Prefix for the dataset")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path.join("..", "data", "utility"), help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
@@ -29,10 +29,10 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=35, help='Embedding size.')
+    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
-    parser.add_argument('--drop_prob', type=float, default=0., help="Keep probability for dropout.")
+    parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=10, help='Max number of neighbors.')
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
@@ -119,7 +119,7 @@ if __name__ == "__main__":
     args = __pars_args__()
 
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = NodeNeighborsInterpolation(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
+    model = SimpleGRU(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
 
     model.reset_parameters()
 

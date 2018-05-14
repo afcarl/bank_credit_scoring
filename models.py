@@ -190,14 +190,13 @@ class RNNJointAttention(BaseNet):
                                                nn.Dropout(dropout_prob))
 
         self.neigh_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
-        self.node_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=(2*temperature), dropout=dropout_prob)
+        self.node_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7, dropout=dropout_prob)
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
-                    # nn.Sequential(nn.Linear(hidden_dim, hidden_dim//2),
-                    #              nn.Tanh(),
-                    #              nn.Dropout(dropout_prob),
-                    #              nn.Linear(hidden_dim // 2, output_dim))
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim//2),
+        #                          nn.Tanh(),
+        #                          nn.Linear(hidden_dim // 2, output_dim))
 
         self.name = "RNN" + self.neigh_neigh_interaction.name
 
@@ -260,7 +259,7 @@ class JordanRNNJointAttention(BaseNet):
                                                nn.Dropout(dropout_prob))
 
         self.neigh_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
-        self.node_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=1,
+        self.node_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7,
                                                        dropout=dropout_prob)
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))

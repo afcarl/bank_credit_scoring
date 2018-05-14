@@ -22,13 +22,12 @@ class SimpleGRU(BaseNet):
         self.app_rnn = nn.Sequential(nn.Dropout(dropout_prob),
                                      nn.ELU())
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
         #                          nn.Tanh(),
-        #                          nn.Dropout(dropout_prob),
         #                          nn.Linear(hidden_dim // 2, output_dim))
+
 
 
 
@@ -64,9 +63,14 @@ class StructuralRNN(BaseNet):
         self.out_RNN = nn.GRU(hidden_dim * (num_edge_types + 1), hidden_dim, 1, batch_first=True, bidirectional=False)
         self.app_outRNN = nn.Sequential(nn.Dropout(dropout_prob),
                                              nn.ELU())
+
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
         #                          nn.ELU())
+
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
+        #                          nn.Tanh(),
+        #                          nn.Linear(hidden_dim // 2, output_dim))
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -125,9 +129,10 @@ class NodeNeighborsInterpolation(BaseNet):
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), hidden_dim),
                                  nn.Dropout(dropout_prob),
-                                 nn.ELU(),
-                                 nn.Linear(hidden_dim, output_dim))
+                                 nn.ELU())
 
+
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
         self.name = "NodeNeighborsInterpolation"
 
 
@@ -174,6 +179,9 @@ class NodeInterpolation(BaseNet):
                                       nn.ELU())
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+        #                          nn.ELU())
+
         self.name = "NodeInterpolation"
 
 

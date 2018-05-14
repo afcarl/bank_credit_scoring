@@ -45,7 +45,7 @@ def setup_norm(type="softlog"):
 def read_stations():
     """
     read the stations and check the data availability
-    :return: 
+    :return:
     """
     stations = pd.read_csv(path.join(BASE_DIR, "pems", "station_comp.csv"), index_col="ID")
     # for idx, id in enumerate(stations.index):
@@ -59,9 +59,9 @@ def read_stations():
 def compute_graph(stations, top_k=6):
     """
     compute the graph structure of the different stations
-    :param stations: 
-    :param top_k: 
-    :return: 
+    :param stations:
+    :param top_k:
+    :return:
     """
 
     stations_distances = OrderedDict()
@@ -86,10 +86,10 @@ def compute_graph(stations, top_k=6):
 def read_station_data(station_id):
     """
     read the csv dataframe of a given staton
-    :param station_id: 
-    :return: 
+    :param station_id:
+    :return:
     """
-    station_data = pd.read_csv(path.join(BASE_DIR, "pems", "fix", "{}.csv".format(station_id)))
+    station_data = pd.read_csv(path.join(BASE_DIR, "pems", "stations", "{}.csv".format(station_id)))
     station_data["5 Minutes"] = pd.to_datetime(station_data["5 Minutes"], format="%Y-%m-%d %H:%M:%S")
     station_data = station_data.set_index("5 Minutes")
 
@@ -98,8 +98,8 @@ def read_station_data(station_id):
 def resample_dataframe(station_dataframe, resample_interval="10T"):
     """
     resample a dataframe
-    :param station_dataframe: 
-    :return: 
+    :param station_dataframe:
+    :return:
     """
 
     def round(t, freq):
@@ -122,8 +122,8 @@ def resample_dataframe(station_dataframe, resample_interval="10T"):
 def get_days_datapoints(station_data):
     """
     get the timestemp of each day
-    :param station_data: 
-    :return: 
+    :param station_data:
+    :return:
     """
     days_groups = station_data.groupby(station_data.index.day)
     return [v if len(v) > 0 else None for k,v in sorted(days_groups.groups.items(), key=lambda x: x[0])]
@@ -132,8 +132,8 @@ def get_days_datapoints(station_data):
 def generate_one_hot_encoding(values):
     """
     generate the label and one_hot encoder for time features
-    :param values: 
-    :return: 
+    :param values:
+    :return:
     """
     values_encoded, label_encoder, one_hot_encoder = one_hot_conversion(values)
     return values_encoded, label_encoder, one_hot_encoder
@@ -215,55 +215,31 @@ def generate_embedding(G, top_k=6):
 
     return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx
 
-def split_training_test_dataset(site_to_idx, site_to_exp_idx):
-    """
-    split the dataset in training/testing/eval dataset
-    :param stock_ids: id of each site
-    :param id_to_exp_id: example_id for each site
-    :param e_t_size: dimentions of the split
-    :return:
-    """
 
-    test_dataset = []
-    eval_dataset = []
-    train_dataset = []
+def fix_station_data(stations, ref_station_data):
 
-    for site_id in TRAIN:
-        train_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
-
-    for site_id in EVAL:
-        eval_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
-
-    for site_id in TEST:
-        test_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
-
-    print("train len: {}\neval len: {}\ntest len: {}".format(len(train_dataset), len(eval_dataset), len(test_dataset)))
-
-    return train_dataset, eval_dataset, test_dataset
+    for station_idx, station_id in enumerate(stations.index):
+        station_data = read_station_data(station_id)
 
 
+
+        if "Speed (mph)" not in station_data.columns:
+            station_data["Speed (mph)"] = pd.Series(np.zeros(station_data.index.size), index=station_data.index)
+            station_data = station_data[["Flow (Veh/5 Minutes)", "Speed (mph)", "# Lane Points", "% Observed"]]
+
+        if station_data.shape[0] != ref_station_data.shape[0]:
+            station_data = station_data.reindex_like(ref_station_data, method='ffill')
+
+
+        if pd.isnull(station_data).any().any():
+            print(station_id)
+            raise Exception("bad stations")
+        station_data.to_csv(path.join(BASE_DIR, "pems", "fix", "{}.csv".format(station_id)))
+        print(station_idx, station_id)
 
 if __name__ == "__main__":
     stations = read_stations()
-    # G, stations_distances = compute_graph(stations)
 
-    G = torch.load(path.join(BASE_DIR, "pems", "temp", "graph.pt"))
-
-    input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx = generate_embedding(G)
-
-    torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "input_embeddings.pt")))
-    torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "target_embeddings.pt")))
-    torch.save(neighbor_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "neighbor_embeddings.pt")))
-    torch.save(edge_type, ensure_dir(path.join(BASE_DIR, "pems", "edge_type.pt")))
-    torch.save(neigh_mask, ensure_dir(path.join(BASE_DIR, "pems", "mask_neighbor.pt")))
-    torch.save(station_id_to_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_idx.pt")))
-    torch.save(station_id_to_exp_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt")))
-
-    # train_dataset, eval_dataset, test_dataset = split_training_test_dataset(site_to_idx, site_to_exp_idx)
-    #
-    # torch.save(train_dataset, ensure_dir(path.join(BASE_DIR, "utility", "train_dataset.bin")))
-    # torch.save(eval_dataset, ensure_dir(path.join(BASE_DIR, "utility", "eval_dataset.bin")))
-    # torch.save(test_dataset, ensure_dir(path.join(BASE_DIR, "utility", "test_dataset.bin")))
-
-
-
+    station_id = 400000
+    station_data = read_station_data(station_id)
+    fix_station_data(stations, station_data)
