@@ -64,7 +64,8 @@ class StructuralRNN(BaseNet):
         self.app_outRNN = nn.Sequential(nn.Dropout(dropout_prob),
                                              nn.ELU())
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
         #                          nn.ELU())
 
@@ -113,6 +114,7 @@ class StructuralRNN(BaseNet):
         output, out_hidden = self.out_RNN(torch.cat((node_output, out_output), dim=-1), out_hidden)
         output = self.app_outRNN(output)
         output = self.prj(output)
+
         return output
 
 
@@ -127,12 +129,12 @@ class NodeNeighborsInterpolation(BaseNet):
                                                        nn.ELU())
                                          for i in range(num_edge_types)])
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), hidden_dim),
-                                 nn.Dropout(dropout_prob),
-                                 nn.ELU())
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), hidden_dim),
+        #                          nn.Dropout(dropout_prob),
+        #                          nn.ELU())
 
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), output_dim))
         self.name = "NodeNeighborsInterpolation"
 
 

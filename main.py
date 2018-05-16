@@ -20,8 +20,8 @@ EXP_NAME = "exp-{}".format(datetime.now())
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "utility"), help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default=path_join("data", "sintetic"), help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="simple_random_dynamic_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
@@ -33,10 +33,10 @@ def __pars_args__():
     parser.add_argument('--input_dim', type=int, default=35, help='Embedding size.')
     parser.add_argument('--hidden_dim', type=int, default=128, help='Hidden state memory size.')
     parser.add_argument('--output_dim', type=int, default=1, help='output size.')
-    parser.add_argument('--time_windows', type=int, default=16, help='Attention time windows.')
+    parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
-    parser.add_argument('--drop_prob', type=float, default=0.0, help="Keep probability for dropout.")
-    parser.add_argument('--temp', type=float, default=1, help="Softmax temperature")
+    parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
+    parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
     parser.add_argument('--n_head', type=int, default=4, help="attention head number")
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
@@ -54,7 +54,7 @@ def __pars_args__():
 if __name__ == "__main__":
     args = __pars_args__()
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = JordanRNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
+    model = TranslatorJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
 
     train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
     eval_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
@@ -116,8 +116,9 @@ if __name__ == "__main__":
 
     # test performance
     model = torch.load(path_join(args.data_dir, "{}.pt".format(model.name)))
+    test_fn = setup_model(model, args.eval_batch_size, args, False)
 
-    iter_test, saved_weights = eval_fn(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
+    iter_test, saved_weights = test_fn(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
     print("test RMSE: {}".format(iter_test))
     pickle.dump(saved_weights, open(ensure_dir(
         path_join(args.data_dir, model.name, "{}saved_test_temp-{}.bin".format(args.dataset_prefix, args.temp))), "wb"))

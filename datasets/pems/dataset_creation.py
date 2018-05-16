@@ -83,16 +83,16 @@ def compute_graph(stations, top_k=6):
         print("station-{} complete".format(station_id))
     return G, stations_distances
 
-def read_station_data(station_id):
+def read_station_data(station_id, lanes):
     """
     read the csv dataframe of a given staton
     :param station_id: 
     :return: 
     """
     station_data = pd.read_csv(path.join(BASE_DIR, "pems", "fix", "{}.csv".format(station_id)))
-    station_data["5 Minutes"] = pd.to_datetime(station_data["5 Minutes"], format="%Y-%m-%d %H:%M:%S")
-    station_data = station_data.set_index("5 Minutes")
-
+    station_data['Unnamed: 0'] = pd.to_datetime(station_data['Unnamed: 0'], format="%Y-%m-%d %H:%M:%S")
+    station_data = station_data.set_index('Unnamed: 0')
+    station_data["# Lane Points"] = lanes
     return station_data
 
 def resample_dataframe(station_dataframe, resample_interval="10T"):
@@ -108,10 +108,10 @@ def resample_dataframe(station_dataframe, resample_interval="10T"):
 
 
     def agg_fn(data):
-        if data.name == "Flow (Veh/5 Minutes)":
-            data = data.sum()
-        else:
-            data = data.mean()
+        data["Flow (Veh/5 Minutes)"] = data["Flow (Veh/5 Minutes)"].sum()
+        data["Speed (mph)"] = data["Speed (mph)"].mean()
+        data["# Lane Points"] = data["# Lane Points"].mean()
+        data["% Observed"] = data["% Observed"].mean()
         return data
 
     station_dataframe = station_dataframe.groupby(partial(round, freq=resample_interval)).apply(agg_fn)
@@ -140,13 +140,13 @@ def generate_one_hot_encoding(values):
 
 
 
-def generate_embedding(G, top_k=6):
+def generate_embedding(stations, G, top_k=6):
     station_id_to_idx = bidict()
     station_id_to_exp_idx = MyBidict()
 
+    # station_id = 408134
     station_id = 400000
-    station_data = read_station_data(station_id)
-    station_data = resample_dataframe(station_data)
+    station_data = read_station_data(station_id, stations.loc[station_id, "Lanes"])
     days_groups = get_days_datapoints(station_data)
 
     # one hot encoders
@@ -170,8 +170,7 @@ def generate_embedding(G, top_k=6):
         if node in nodes_data:
             node_data = nodes_data[node]
         else:
-            node_data = read_station_data(node)
-            node_data = resample_dataframe(node_data)
+            node_data = read_station_data(node, stations.loc[station_id, "Lanes"])
             assert not np.isnan(node_data.values).any()
             nodes_data[node] = node_data
 
@@ -180,8 +179,7 @@ def generate_embedding(G, top_k=6):
             if neighbor_id in nodes_data:
                 neighbor_data = nodes_data[neighbor_id]
             else:
-                neighbor_data = read_station_data(neighbor_id)
-                neighbor_data = resample_dataframe(neighbor_data)
+                neighbor_data = read_station_data(neighbor_id, stations.loc[station_id, "Lanes"])
                 assert not np.isnan(neighbor_data.values).any()
                 nodes_data[neighbor_id] = neighbor_data
             neighbors_data.append((neighbor_id, neighbor_data))
@@ -215,7 +213,7 @@ def generate_embedding(G, top_k=6):
 
     return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx
 
-def split_training_test_dataset(site_to_idx, site_to_exp_idx):
+def split_training_test_dataset(site_to_idx, site_to_exp_idx, train_stations, eval_stations, test_stations):
     """
     split the dataset in training/testing/eval dataset
     :param stock_ids: id of each site
@@ -228,14 +226,14 @@ def split_training_test_dataset(site_to_idx, site_to_exp_idx):
     eval_dataset = []
     train_dataset = []
 
-    for site_id in TRAIN:
-        train_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
+    for _id in train_stations:
+        train_dataset.extend(site_to_exp_idx.d[_id])
 
-    for site_id in EVAL:
-        eval_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
+    for _id in eval_stations:
+        eval_dataset.extend(site_to_exp_idx.d[_id])
 
-    for site_id in TEST:
-        test_dataset.extend(site_to_exp_idx.d[site_to_idx[site_id]])
+    for _id in test_stations:
+        test_dataset.extend(site_to_exp_idx.d[_id])
 
     print("train len: {}\neval len: {}\ntest len: {}".format(len(train_dataset), len(eval_dataset), len(test_dataset)))
 
@@ -249,7 +247,7 @@ if __name__ == "__main__":
 
     G = torch.load(path.join(BASE_DIR, "pems", "temp", "graph.pt"))
 
-    input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx = generate_embedding(G)
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx = generate_embedding(stations, G)
 
     torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "input_embeddings.pt")))
     torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "target_embeddings.pt")))
@@ -259,11 +257,29 @@ if __name__ == "__main__":
     torch.save(station_id_to_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_idx.pt")))
     torch.save(station_id_to_exp_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt")))
 
-    # train_dataset, eval_dataset, test_dataset = split_training_test_dataset(site_to_idx, site_to_exp_idx)
-    #
-    # torch.save(train_dataset, ensure_dir(path.join(BASE_DIR, "utility", "train_dataset.bin")))
-    # torch.save(eval_dataset, ensure_dir(path.join(BASE_DIR, "utility", "eval_dataset.bin")))
-    # torch.save(test_dataset, ensure_dir(path.join(BASE_DIR, "utility", "test_dataset.bin")))
+    station_id_to_idx = torch.load(path.join(BASE_DIR, "pems", "station_id_to_idx.pt"))
+    station_id_to_exp_idx = torch.load(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt"))
+
+
+    stations_id = sorted(stations.index.values)
+    train_stations = np.random.choice(stations_id, 2500, replace=False)
+    for station_id in train_stations:
+        stations_id.remove(station_id)
+
+    eval_stations = np.random.choice(stations_id, 600, replace=False)
+    for station_id in eval_stations:
+        stations_id.remove(station_id)
+
+
+
+
+
+    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(station_id_to_idx, station_id_to_exp_idx,
+                                                                            train_stations, eval_stations, stations_id)
+
+    torch.save(train_dataset, ensure_dir(path.join(BASE_DIR, "pems", "train_dataset.pt")))
+    torch.save(eval_dataset, ensure_dir(path.join(BASE_DIR, "pems", "eval_dataset.pt")))
+    torch.save(test_dataset, ensure_dir(path.join(BASE_DIR, "pems", "test_dataset.pt")))
 
 
 

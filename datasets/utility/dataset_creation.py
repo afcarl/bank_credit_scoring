@@ -64,8 +64,8 @@ def convert_attribute(sites_attribute):
     time_zone_values = [value.time_zone for value in sites_attribute.values()]
 
     # one_hot_conversion
-    sectors_one_hot, sector_encoder = one_hot_conversion(secotor_values)
-    tzs_one_hot, tz_encoder = one_hot_conversion(time_zone_values)
+    sectors_one_hot, sector_label_encoder, sector_onehot_encoder = one_hot_conversion(secotor_values)
+    tzs_one_hot, tz_label_encoder, tz_onehot_encoder = one_hot_conversion(time_zone_values)
 
 
 
@@ -75,9 +75,9 @@ def convert_attribute(sites_attribute):
         example.extend(tz_one_hot.tolist())
         ret[value.site_id] = example
 
-    return ret, sector_encoder, tz_encoder
+    return ret, (sector_label_encoder, sector_onehot_encoder), (tz_label_encoder, tz_onehot_encoder)
 
-def load_data(site_infos, resample_interval="180T", norm_type="softlog"):
+def load_data(site_infos, resample_interval="180T", norm_type="softplus"):
     """
     load the data in a pandas datafra
     1) read the attribute
@@ -129,12 +129,12 @@ def load_data(site_infos, resample_interval="180T", norm_type="softlog"):
 
 
     # convert to categorycal
-    days_onehot, days_encoder = one_hot_conversion(days)
-    days_onehot = pd.DataFrame(days_onehot, index=idx, columns=days_encoder.classes_)
+    days_onehot, days_label_encoder, days_onehot_encoder = one_hot_conversion(days)
+    days_onehot = pd.DataFrame(days_onehot, index=idx, columns=days_label_encoder.classes_)
 
     if resample_interval[-1] == "T":
-        times_onehot, times_encoder = one_hot_conversion(time)
-        times_onehot = pd.DataFrame(times_onehot, index=idx, columns=times_encoder.classes_)
+        times_onehot, times_label_encoder, times_onehot_encoder = one_hot_conversion(time)
+        times_onehot = pd.DataFrame(times_onehot, index=idx, columns=times_label_encoder.classes_)
 
     if norm_type == "start_dif" and resample_interval[-1] == "T":
         return sites_normalized_dataframe, start_values, days_onehot, times_onehot

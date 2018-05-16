@@ -215,13 +215,32 @@ def generate_embedding(G, top_k=6):
 
     return input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx
 
+def resample_dataframe(station_dataframe, resample_interval="10T"):
+    """
+    resample a dataframe
+    :param station_dataframe:
+    :return:
+    """
+
+    def round(t, freq):
+        freq = pd.tseries.frequencies.to_offset(freq)
+        return pd.Timestamp((t.value // freq.delta.value) * freq.delta.value)
+
+    station_dataframe = station_dataframe.groupby(partial(round, freq=resample_interval)).agg(
+        {"Flow (Veh/5 Minutes)": "sum", "Speed (mph)": "mean", "# Lane Points": "mean", "% Observed": "mean"})
+
+
+    station_dataframe["Flow (Veh/5 Minutes)"] = np.log((station_dataframe["Flow (Veh/5 Minutes)"]/10) +1)
+    station_dataframe["Speed (mph)"] = np.log(station_dataframe["Speed (mph)"] + 1)
+    station_dataframe["% Observed"] = station_dataframe["% Observed"] / 100
+    return station_dataframe
 
 def fix_station_data(stations, ref_station_data):
 
     for station_idx, station_id in enumerate(stations.index):
         station_data = read_station_data(station_id)
 
-
+        print(station_idx, station_id)
 
         if "Speed (mph)" not in station_data.columns:
             station_data["Speed (mph)"] = pd.Series(np.zeros(station_data.index.size), index=station_data.index)
@@ -234,8 +253,12 @@ def fix_station_data(stations, ref_station_data):
         if pd.isnull(station_data).any().any():
             print(station_id)
             raise Exception("bad stations")
-        station_data.to_csv(path.join(BASE_DIR, "pems", "fix", "{}.csv".format(station_id)))
-        print(station_idx, station_id)
+
+        station_data = resample_dataframe(station_data)
+
+        station_data = station_data.apply(pd.to_numeric)
+        station_data.to_csv(path.join(BASE_DIR, "pems", "fix", "{}.csv".format(station_id)), date_format="%Y-%m-%d %H:%M:%S")
+
 
 if __name__ == "__main__":
     stations = read_stations()

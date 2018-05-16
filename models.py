@@ -330,7 +330,7 @@ class JordanRNNJointAttention(BaseNet):
             neigh_neigh_attentions[:, i] = neigh_neigh_attention.squeeze()
 
             output, node_neigh_attention = self.node_neigh_interaction(node_output, neigh_neigh_outputs, i, node_neigh_att_mask)
-            output = torch.nn.functional.elu(output)
+
             output = self.prj(output)
             outputs[:, i] = output
             node_neigh_attentions[:, i] = node_neigh_attention.squeeze()
