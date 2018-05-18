@@ -50,19 +50,19 @@ class StructuralRNN(BaseNet):
         super(StructuralRNN, self).__init__()
         self.NodeRNN = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
         self.app_NodeRNN = nn.Sequential(nn.Dropout(dropout_prob),
-                                         nn.ELU())
+                                         nn.ReLU())
 
         NeighborRNN = [nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
                        for i in range(num_edge_types)]
 
         self.NeighborRNN = nn.ModuleList(NeighborRNN)
         self.app_NeighborRNN = nn.Sequential(nn.Dropout(dropout_prob),
-                                             nn.ELU())
+                                             nn.ReLU())
 
         self.name = "StructuralRNN"
         self.out_RNN = nn.GRU(hidden_dim * (num_edge_types + 1), hidden_dim, 1, batch_first=True, bidirectional=False)
         self.app_outRNN = nn.Sequential(nn.Dropout(dropout_prob),
-                                             nn.ELU())
+                                             nn.ReLU())
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
                                  nn.ELU())
@@ -123,10 +123,10 @@ class NodeNeighborsInterpolation(BaseNet):
         super(NodeNeighborsInterpolation, self).__init__()
         self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
                                       nn.Dropout(dropout_prob),
-                                      nn.ELU())
+                                      nn.ReLU())
         self.neight_prj = nn.ModuleList([nn.Sequential(nn.Linear(input_dim, hidden_dim),
                                                        nn.Dropout(dropout_prob),
-                                                       nn.ELU())
+                                                       nn.ReLU())
                                          for i in range(num_edge_types)])
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), hidden_dim),
@@ -134,7 +134,9 @@ class NodeNeighborsInterpolation(BaseNet):
         #                          nn.ELU())
 
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), hidden_dim),
+                                 nn.ReLU(),
+                                 nn.Linear(hidden_dim, output_dim))
         self.name = "NodeNeighborsInterpolation"
 
 
