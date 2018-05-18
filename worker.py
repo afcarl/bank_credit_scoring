@@ -7,7 +7,7 @@ from helper import get_time_mask
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate)
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neigh):
         _loss = 0

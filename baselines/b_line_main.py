@@ -45,7 +45,7 @@ def __pars_args__():
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=0.)
+        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
     else:
         optimizer = None
 
