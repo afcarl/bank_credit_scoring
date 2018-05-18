@@ -307,7 +307,6 @@ class JordanRNNJointAttention(BaseNet):
         neighbors_input_ = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input_), dim=-1)
 
         for i in range(time_steps):
-            print(i)
             node_hidden = self.NodeRNN(torch.cat((node_input[:, i], rec_outputs), dim=-1), node_hidden)
             # node_hidden = self.NodeRNN(node_input[:, i], node_hidden)
             node_enc = self.NodeRNN_trans(node_hidden)
@@ -345,9 +344,6 @@ class JordanRNNJointAttention(BaseNet):
 
             output = self.prj(output)
             outputs.append(output)
-
-            print(node_neigh_attention.size())
-
             att = torch.FloatTensor(batch_size, 2 * time_steps).zero_()
             att[(1 - mask_time[:, i]).repeat(1, 2)] = node_neigh_attention.squeeze().cpu()
             node_neigh_attentions.append(att)

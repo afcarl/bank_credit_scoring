@@ -29,7 +29,6 @@ def setup_model(model, batch_size, args, is_training=True):
                 b_neighbors_sequence = b_neighbors_sequence.cuda()
                 b_edge_types = b_edge_types.cuda()
                 b_mask_neigh = b_mask_neigh.cuda()
-                b_mask_time = b_mask_time.cuda()
 
             node_hidden = model.init_hidden(batch_size)
             neighbor_hidden = model.init_hidden(batch_size*args.max_neighbors)
