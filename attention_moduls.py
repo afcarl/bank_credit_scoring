@@ -90,7 +90,7 @@ class FeatureMultiHeadAttention(nn.Module):
 
         self.softmax = TempSoftmax(temp)
         self.prj = nn.Sequential(nn.Linear(hidden_dim * n_head, hidden_dim),
-                                 nn.ELU())
+                                 nn.ReLU())
 
 
     def forward(self, q, k, v, batch_size, att_mask):

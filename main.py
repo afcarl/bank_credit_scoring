@@ -54,7 +54,7 @@ def __pars_args__():
 if __name__ == "__main__":
     args = __pars_args__()
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
-    model = RNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
+    model = JordanRNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
 
     train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
     eval_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)

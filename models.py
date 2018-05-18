@@ -252,18 +252,19 @@ class JordanRNNJointAttention(BaseNet):
         super(JordanRNNJointAttention, self).__init__()
 
         self.NodeRNN = nn.GRUCell(input_dim+3, hidden_dim)
-        self.NodeRNN_trans = nn.Sequential(nn.ELU(),
+        self.NodeRNN_trans = nn.Sequential(nn.ReLU(),
                                            nn.Dropout(dropout_prob))
 
         self.NeighborRNN = nn.GRUCell(input_dim*2, hidden_dim)
-        self.NeighborRNN_trans = nn.Sequential(nn.ELU(),
+        self.NeighborRNN_trans = nn.Sequential(nn.ReLU(),
                                                nn.Dropout(dropout_prob))
 
         self.neigh_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
         self.node_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7,
                                                        dropout=dropout_prob)
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
             # nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
             #                      nn.Tanh(),
@@ -306,6 +307,7 @@ class JordanRNNJointAttention(BaseNet):
         neighbors_input_ = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input_), dim=-1)
 
         for i in range(time_steps):
+            print(i)
             node_hidden = self.NodeRNN(torch.cat((node_input[:, i], rec_outputs), dim=-1), node_hidden)
             # node_hidden = self.NodeRNN(node_input[:, i], node_hidden)
             node_enc = self.NodeRNN_trans(node_hidden)
@@ -321,7 +323,7 @@ class JordanRNNJointAttention(BaseNet):
             if self.time_window > i:
                 time_window = 0
             else:
-                time_window = i - self.time_window
+                time_window = i - self.time_window + 1
 
 
             neighbors_interaction, neigh_neigh_attention = self.neigh_neigh_interaction(node_output[i],
@@ -329,7 +331,10 @@ class JordanRNNJointAttention(BaseNet):
                                                                                         mask_neight[:, i:i+1, :, time_window:i+1].contiguous().view(batch_size, 1, -1)
                                                                                         )
             neigh_neigh_outputs.append(neighbors_interaction)
-            neigh_neigh_attentions.append(neigh_neigh_attention.squeeze())
+
+            att = torch.FloatTensor(batch_size, neigh_number*time_steps).zero_()
+            att[(1 - mask_time[:, i]).repeat(1, neigh_number)] = neigh_neigh_attention.cpu()
+            neigh_neigh_attentions.append(att)
 
 
             output, node_neigh_attention = self.node_neigh_interaction(node_output[i],
@@ -340,7 +345,12 @@ class JordanRNNJointAttention(BaseNet):
 
             output = self.prj(output)
             outputs.append(output)
-            node_neigh_attentions.append(node_neigh_attention.squeeze())
+
+            print(node_neigh_attention.size())
+
+            att = torch.FloatTensor(batch_size, 2 * time_steps).zero_()
+            att[(1 - mask_time[:, i]).repeat(1, 2)] = node_neigh_attention.squeeze().cpu()
+            node_neigh_attentions.append(att)
 
 
 
@@ -353,7 +363,7 @@ class JordanRNNJointAttention(BaseNet):
             elif i < time_steps-1:
                 rec_outputs[:] = diff
 
-        return torch.stack(outputs, dim=1), neigh_neigh_attentions, node_neigh_attentions
+        return torch.stack(outputs, dim=1), torch.stack(neigh_neigh_attentions, dim=1), torch.stack(node_neigh_attentions, dim=1)
 
     def reset_parameters(self):
         for p in self.parameters():
@@ -373,7 +383,6 @@ class JordanRNNJointAttention(BaseNet):
         if torch.cuda.is_available():
             hidden = hidden.cuda()
         return hidden
-
 
 class RNNJordanJointAttention(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, time_window, dropout_prob=0.1):
