@@ -250,12 +250,12 @@ class JordanRNNJointAttention(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, n_head, time_window, temperature=1, dropout_prob=0.1):
         super(JordanRNNJointAttention, self).__init__()
 
-        self.NodeRNN = nn.GRUCell(input_dim, hidden_dim)
-        self.NodeRNN_trans = nn.Sequential(nn.ReLU(),
+        self.NodeRNN = nn.GRUCell(input_dim+3, hidden_dim)
+        self.NodeRNN_trans = nn.Sequential(nn.ELU(),
                                            nn.Dropout(dropout_prob))
 
         self.NeighborRNN = nn.GRUCell(input_dim*2, hidden_dim)
-        self.NeighborRNN_trans = nn.Sequential(nn.ReLU(),
+        self.NeighborRNN_trans = nn.Sequential(nn.ELU(),
                                                nn.Dropout(dropout_prob))
 
         self.neigh_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
@@ -287,67 +287,72 @@ class JordanRNNJointAttention(BaseNet):
 
 
 
-        node_output = Variable(torch.FloatTensor(batch_size, time_steps, self.hidden_dim).zero_(), requires_grad=False)
-        neighbors_output = Variable(torch.FloatTensor(batch_size, neigh_number, time_steps, self.hidden_dim).zero_(), requires_grad=False)
-        neigh_neigh_outputs = Variable(torch.FloatTensor(batch_size, time_steps, self.hidden_dim).zero_(), requires_grad=False)
-        outputs = Variable(torch.FloatTensor(batch_size, time_steps, self.output_dim).zero_())
+        node_output = []
+        neighbors_output = []
+        neigh_neigh_outputs = []
+        neigh_neigh_attentions = []
+        node_neigh_attentions = []
+        outputs = []
         rec_outputs = Variable(torch.FloatTensor(batch_size, 3).zero_(), requires_grad=False)
-        neigh_neigh_attentions = torch.FloatTensor(batch_size, time_steps, (neigh_number) * time_steps).zero_()
-        node_neigh_attentions = torch.FloatTensor(batch_size, time_steps, 2 * time_steps).zero_()
+
+        mask_neight = mask_neight.unsqueeze(-2).unsqueeze(-1).repeat(1, time_steps, 1, time_steps)
 
         if use_cuda:
-            node_output = node_output.cuda()
-            neighbors_output = neighbors_output.cuda()
-            neigh_neigh_outputs = neigh_neigh_outputs.cuda()
-            outputs = outputs.cuda()
             rec_outputs = rec_outputs.cuda()
-            neigh_neigh_attentions = neigh_neigh_attentions.cuda()
-            node_neigh_attentions = node_neigh_attentions.cuda()
 
-        att_mask = mask_time.unsqueeze(-2).repeat(1, 1, neigh_number, 1)
-        mask_neight = mask_neight.unsqueeze(-2).unsqueeze(-1).repeat(1, time_steps, 1, time_steps)
-        neighs_neighs_att_mask = att_mask.masked_fill_(mask_neight, 1).view(batch_size, time_steps, -1)
-
-        node_neigh_att_mask = mask_time.repeat(1, 1, 2)
 
         neighbors_input_ = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
         neighbors_input_ = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input_), dim=-1)
 
         for i in range(time_steps):
-            # node_hidden = self.NodeRNN(torch.cat((node_input[:, i], rec_outputs), dim=-1), node_hidden)
-            node_hidden = self.NodeRNN(node_input[:, i], node_hidden)
+            node_hidden = self.NodeRNN(torch.cat((node_input[:, i], rec_outputs), dim=-1), node_hidden)
+            # node_hidden = self.NodeRNN(node_input[:, i], node_hidden)
             node_enc = self.NodeRNN_trans(node_hidden)
-            node_output[:, i] = node_enc
+            node_output.append(node_enc)
 
 
 
             neighbors_hidden = self.NeighborRNN(neighbors_input_[:, i], neighbors_hidden)
             neighbors_enc = self.NeighborRNN_trans(neighbors_hidden)
             neighbors_enc = torch.stack(torch.chunk(neighbors_enc, neigh_number, dim=0), dim=1)
-            neighbors_output[:, :, i] = neighbors_enc
+            neighbors_output.append(neighbors_enc)
 
-            neighbors_interaction, neigh_neigh_attention = self.neigh_neigh_interaction(node_output, neighbors_output, i, neighs_neighs_att_mask)
-            neigh_neigh_outputs[:, i] = neighbors_interaction
-            neigh_neigh_attentions[:, i] = neigh_neigh_attention.squeeze()
+            if self.time_window > i:
+                time_window = 0
+            else:
+                time_window = i - self.time_window
 
-            output, node_neigh_attention = self.node_neigh_interaction(node_output, neigh_neigh_outputs, i, node_neigh_att_mask)
+
+            neighbors_interaction, neigh_neigh_attention = self.neigh_neigh_interaction(node_output[i],
+                                                                                        torch.stack(neighbors_output[time_window:i+1], dim=2),
+                                                                                        mask_neight[:, i:i+1, :, time_window:i+1].contiguous().view(batch_size, 1, -1)
+                                                                                        )
+            neigh_neigh_outputs.append(neighbors_interaction)
+            neigh_neigh_attentions.append(neigh_neigh_attention.squeeze())
+
+
+            output, node_neigh_attention = self.node_neigh_interaction(node_output[i],
+                                                                       torch.cat((torch.stack((node_output[time_window:i + 1]), dim=1),
+                                                                                  torch.stack(neigh_neigh_outputs[time_window:i + 1], dim=1)),
+                                                                                 dim=1)
+                                                                       )
 
             output = self.prj(output)
-            outputs[:, i] = output
-            node_neigh_attentions[:, i] = node_neigh_attention.squeeze()
+            outputs.append(output)
+            node_neigh_attentions.append(node_neigh_attention.squeeze())
 
 
 
             # external recurrent connection
             upper_bound = i+1
             lower_bound = i-2 if i >= 3 else 0
-            diff = (outputs[:, lower_bound:upper_bound, 0] - target[:, lower_bound:upper_bound, 0])
+            diff = (torch.stack(outputs[lower_bound:upper_bound], dim=1)[:, 0] - target[:, lower_bound:upper_bound, 0])
             if i < 2:
                 rec_outputs[:, :upper_bound] = diff
             elif i < time_steps-1:
                 rec_outputs[:] = diff
 
-        return outputs, neigh_neigh_attentions, node_neigh_attentions
+        return torch.stack(outputs, dim=1), neigh_neigh_attentions, node_neigh_attentions
 
     def reset_parameters(self):
         for p in self.parameters():

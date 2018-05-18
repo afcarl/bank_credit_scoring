@@ -3,6 +3,7 @@ from torch import optim
 from torch import nn
 import random
 from helper import get_time_mask
+from torchviz import make_dot
 
 
 def setup_model(model, batch_size, args, is_training=True):
@@ -71,8 +72,8 @@ def setup_model(model, batch_size, args, is_training=True):
                 for row, idx in enumerate(b_index):
                     saved_weights[idx] = dict(
                         id=idx,
-                        neigh_neigh_attention=neigh_neigh_attention[row].cpu(),
-                        node_neigh_attention=node_neigh_attention[row].cpu(),
+                        # neigh_neigh_attention=neigh_neigh_attention[row].cpu(),
+                        # node_neigh_attention=node_neigh_attention[row].cpu(),
                         input=b_input_sequence[row],
                         target=b_target_sequence[row],
                         neighbors=b_neighbors_sequence[row].squeeze(),
