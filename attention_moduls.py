@@ -243,7 +243,7 @@ class FeatureTransformerLayer(nn.Module):
                                              self.hidden_dim)  # n_head*batch_size, max_neighbors+1*seq_le, hidden_dim
 
         output, slf_attn = self.slf_attn(q_s, k_s, v_s, batch_size, None)
-        output = self.layer_norm(output + node_enc)
+        output = self.layer_norm(output)
 
         return output, slf_attn
 

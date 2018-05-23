@@ -127,7 +127,8 @@ class TranslatorJointAttention(BaseNet):
                                        nn.ReLU(),
                                        nn.Dropout(dropout_prob))
 
-        self.proj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.proj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                  nn.ELU())
 
         self.name = "Translator" + self.neigh_neigh_interaction.name
         self.input_dim = input_dim
@@ -142,7 +143,11 @@ class TranslatorJointAttention(BaseNet):
 
 
     def forward(self, node_input, neighbors_input, node_hidden, neighbors_hidden, edge_weights, mask_neight, mask_time, target):
+        use_cuda = next(self.parameters()).is_cuda
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
+        if use_cuda:
+            mask_time = mask_time.cuda()
+            mask_neight = mask_neight.cuda()
 
         node_output = self.node_enc(node_input)
 
@@ -192,8 +197,7 @@ class RNNJointAttention(BaseNet):
         self.neigh_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
         self.node_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7, dropout=dropout_prob)
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim//2),
         #                          nn.Tanh(),
@@ -213,6 +217,10 @@ class RNNJointAttention(BaseNet):
         # param setup
         use_cuda = next(self.parameters()).is_cuda
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
+
+        if use_cuda:
+            mask_time = mask_time.cuda()
+            mask_neight = mask_neight.cuda()
 
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
         node_output = self.NodeRNN_trans(node_output)
@@ -288,7 +296,6 @@ class JordanRNNJointAttention(BaseNet):
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
 
 
-
         node_output = []
         neighbors_output = []
         neigh_neigh_outputs = []
@@ -301,7 +308,7 @@ class JordanRNNJointAttention(BaseNet):
 
         if use_cuda:
             rec_outputs = rec_outputs.cuda()
-
+            mask_neight = mask_neight.cuda()
 
         neighbors_input_ = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
         neighbors_input_ = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input_), dim=-1)

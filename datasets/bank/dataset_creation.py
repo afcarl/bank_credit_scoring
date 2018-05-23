@@ -223,34 +223,34 @@ def split_training_test_dataset(_ids, id_to_idx, e_t_size=2000):
 
 
 if __name__ == "__main__":
-    customers_data = pd.read_msgpack(path.join(BASE_DIR, "customers_risk_df.msg"))
-    G = nx.readwrite.gpickle.read_gpickle(path.join(BASE_DIR, "prune_graph.bin"))
+    # customers_data = pd.read_msgpack(path.join(BASE_DIR, "customers_risk_df.msg"))
+    # G = nx.readwrite.gpickle.read_gpickle(path.join(BASE_DIR, "prune_graph.bin"))
 
+    # customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, neighbors_type_embedding, customer_id_to_idx, \
+    # customers_with_out_degree, customers_without_out_degree = extract_dateframe(customers_data, G)
 
+    # print("num training customers: {}".format(len(customers_with_out_degree)))
+    # print("num not training customers: {}".format(len(customers_without_out_degree)))
 
-    # print(customers_data.columns.get_level_values("id").unique().size)
-    # print(customers_data.columns.get_level_values("attribute").unique())
+    # # torch.save(customers_embedding, path.join(BASE_DIR, "customers_embed.pt"))
+    # # torch.save(targets_embedding, path.join(BASE_DIR, "targets_embed.pt"))
+    # # torch.save(neighbors_embedding, path.join(BASE_DIR, "neighbors_embed.pt"))
+    # # torch.save(neighbors_mask, path.join(BASE_DIR, "neighbors_msk.pt"))
+    # # torch.save(neighbors_type_embedding, path.join(BASE_DIR, "neighbors_type.pt"))
+    # pickle.dump(customer_id_to_idx, open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "wb"))
+    # pickle.dump(customers_with_out_degree, open(path.join(BASE_DIR, "customers_with_out_degree.bin"), "wb"))
+    # pickle.dump(customers_without_out_degree, open(path.join(BASE_DIR, "customers_without_out_degree.bin"), "wb"))
 
-    customers_embedding, targets_embedding, neighbors_embedding, neighbors_mask, neighbors_type_embedding, customer_id_to_idx, \
-    customers_with_out_degree, customers_without_out_degree = extract_dateframe(customers_data, G)
+    customer_id_to_idx = pickle.load(open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "rb"))
+    customers_with_out_degree = pickle.load(open(path.join(BASE_DIR, "customers_with_out_degree.bin"), "rb"))
+    customers_without_out_degree = pickle.load(open(path.join(BASE_DIR, "customers_without_out_degree.bin"), "rb"))
 
-    print("num training customers: {}".format(len(customers_with_out_degree)))
-    print("num not training customers: {}".format(len(customers_without_out_degree)))
-
-    torch.save(customers_embedding, path.join(BASE_DIR, "customers_embed.pt"))
-    torch.save(targets_embedding, path.join(BASE_DIR, "targets_embed.pt"))
-    torch.save(neighbors_embedding, path.join(BASE_DIR, "neighbors_embed.pt"))
-    torch.save(neighbors_mask, path.join(BASE_DIR, "neighbors_msk.pt"))
-    torch.save(neighbors_type_embedding, path.join(BASE_DIR, "neighbors_type.pt"))
-    pickle.dump(customer_id_to_idx, open(path.join(BASE_DIR, "customers_id_to_idx.bin"), "wb"))
-    pickle.dump(customers_with_out_degree, open(path.join(BASE_DIR, "customers_with_out_degree.bin"), "wb"))
-    pickle.dump(customers_without_out_degree, open(path.join(BASE_DIR, "customers_without_out_degree.bin"), "wb"))
 
     train_dataset, eval_dataset, test_dataset = split_training_test_dataset(customers_with_out_degree, customer_id_to_idx, 2000)
 
-    pickle.dump(train_dataset, open(path.join(BASE_DIR, "train_dataset.bin"), "wb"))
-    pickle.dump(eval_dataset, open(path.join(BASE_DIR, "eval_dataset.bin"), "wb"))
-    pickle.dump(test_dataset, open(path.join(BASE_DIR, "test_dataset.bin"), "wb"))
+    torch.save(train_dataset, path.join(BASE_DIR, "train_dataset.pt"))
+    torch.save(eval_dataset, path.join(BASE_DIR, "eval_dataset.pt"))
+    torch.save(test_dataset, path.join(BASE_DIR, "test_dataset.pt"))
 
 
 

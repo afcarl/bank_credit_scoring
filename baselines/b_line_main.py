@@ -15,11 +15,13 @@ from os import path
 vis = visdom.Visdom(port=8080)
 EXP_NAME = "exp-{}".format(datetime.now())
 
-
+inv_softlog_1 = lambda x: (torch.exp(x) - 2)
+inv_softlog = lambda x: (torch.exp(x) - 1) * 10
+inv_softplus = lambda x: torch.log(torch.exp(x) - 1)
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default=path.join("..", "data", "pems"), help="Directory containing dataset file")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default="customers", help="Directory containing dataset file")
     parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
@@ -29,7 +31,7 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=54, help='Embedding size.')
+    parser.add_argument('--input_dim', type=int, default=932, help='Embedding size.')
     parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
@@ -39,13 +41,13 @@ def __pars_args__():
     parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
     parser.add_argument('--n_iter', type=int, default=102, help="Iteration number.")
     parser.add_argument('--eval_step', type=int, default=10, help='How often do an eval step')
-    parser.add_argument('--save_rate', type=float, default=0.99, help='How often do save an eval example')
+    parser.add_argument('--save_rate', type=float, default=0.9, help='How often do save an eval example')
     return parser.parse_args()
 
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.)
+        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.001)
     else:
         optimizer = None
 
@@ -81,7 +83,20 @@ def setup_model(model, batch_size, args, is_training=True):
             if is_training:
                 loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
             else:
-                loss = model.compute_error(predict.squeeze(), b_target_sequence.squeeze())
+                if args.data_dir == "pems":
+                    predict = inv_softlog(predict.squeeze())
+                    target = inv_softlog(b_target_sequence.squeeze())
+                elif args.data_dir == "utility":
+                    predict = inv_softplus(predict.squeeze())
+                    target = inv_softplus(b_target_sequence.squeeze())
+                elif args.data_dir == "customers":
+                    predict = inv_softlog_1(predict.squeeze())
+                    target = inv_softlog_1(b_target_sequence.squeeze())
+                else:
+                    predict = predict.squeeze()
+                    target = b_target_sequence.squeeze()
+
+                loss = model.compute_error(predict, target)
 
             _loss += loss.data[0]
             b_idx += 1
@@ -95,19 +110,14 @@ def setup_model(model, batch_size, args, is_training=True):
                     print("num example:{}\tloss:{}".format((b_idx * batch_size), _loss / b_idx))
 
             elif random.random() > args.save_rate:
-                b_input_sequence = b_input_sequence.data.cpu()
-                b_target_sequence = b_target_sequence.data.cpu()
-                b_neighbors_sequence = b_neighbors_sequence.data.cpu()
-                predict = predict.data.cpu().squeeze()
                 print(predict)
-                # print(b_target_sequence[0], predict[0])
                 for row, idx in enumerate(b_index):
                     saved_weights[idx] = dict(
                         id=idx,
-                        input=b_input_sequence[row],
-                        target=b_target_sequence[row],
-                        neighbors=b_neighbors_sequence[row].squeeze(),
-                        predict=predict[row]
+                        input=b_input_sequence[row].data.cpu(),
+                        target=target[row].data.cpu(),
+                        neighbors=b_neighbors_sequence[row].squeeze().data.cpu(),
+                        predict=predict[row].data.cpu()
                     )
 
         _loss /= b_idx
@@ -117,14 +127,14 @@ def setup_model(model, batch_size, args, is_training=True):
 if __name__ == "__main__":
     args = __pars_args__()
 
-    input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(args.data_dir, prefix=args.dataset_prefix)
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(path.join("..", "data", args.data_dir), prefix=args.dataset_prefix)
     model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
 
     model.reset_parameters()
 
-    train_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.train_file_name)
-    eval_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.eval_file_name)
-    test_dataset = CustomDataset(args.data_dir, args.dataset_prefix + args.test_file_name)
+    train_dataset = CustomDataset(path.join("..", "data", args.data_dir), args.dataset_prefix + args.train_file_name)
+    eval_dataset = CustomDataset(path.join("..", "data", args.data_dir), args.dataset_prefix + args.eval_file_name)
+    test_dataset = CustomDataset(path.join("..", "data", args.data_dir), args.dataset_prefix + args.test_file_name)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=1,
                                   drop_last=True)
@@ -170,20 +180,20 @@ if __name__ == "__main__":
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
             print("dump example")
-            pickle.dump(saved_weights, open(ensure_dir(path.join(args.data_dir, model.name, "saved_eval_iter_{}_drop_{}.bin".format(int(i_iter/args.eval_step), args.drop_prob))), "wb"))
+            torch.save(saved_weights, ensure_dir(path.join(path.join("..", "data", args.data_dir), model.name, "saved_eval_iter_{}_drop_{}.pt".format(int(i_iter/args.eval_step), args.drop_prob))))
             print("dump done")
 
             if best_model > iter_eval:
                 print("save best model")
                 best_model = iter_eval
-                torch.save(model, path.join(args.data_dir, "{}.pt".format(model.name)))
+                torch.save(model, path.join(path.join("..", "data", args.data_dir), "{}.pt".format(model.name)))
 
 
     # test performance
-    model = torch.load(path.join(args.data_dir, "{}.pt".format(model.name)))
+    model = torch.load(path.join(path.join("..", "data", args.data_dir), "{}.pt".format(model.name)))
 
     test = setup_model(model, args.eval_batch_size, args, is_training=False)
     iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
     print("test RMSE: {}".format(iter_test))
-    pickle.dump(saved_weights, open(ensure_dir(
-        path.join(args.data_dir, model.name, "saved_test_drop_{}.bin".format(args.drop_prob))), "wb"))
+    torch.save(saved_weights, ensure_dir(
+        path.join(path.join("..", "data", args.data_dir), model.name, "saved_test_drop_{}.pt".format(args.drop_prob))))

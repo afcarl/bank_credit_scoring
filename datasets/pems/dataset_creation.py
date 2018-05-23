@@ -156,7 +156,7 @@ def generate_embedding(stations, G, top_k=6):
 
     nodes = list(filter(lambda x: type(x) == int, G.nodes))
     num_exp = day_one_hot_encoder.active_features_.size
-    seq_len = days_groups[0].size - 1
+    seq_len = days_groups[0].size - 6
     features_len = 4 + day_one_hot_encoder.active_features_.size + hour_one_hot_encoder.active_features_.size + minutes_one_hot_encoder.active_features_.size
 
     input_embeddings = torch.FloatTensor(num_exp * len(nodes), seq_len, features_len).zero_()
@@ -193,14 +193,14 @@ def generate_embedding(stations, G, top_k=6):
             minute_one_hot, _, _ = one_hot_conversion(day_timestep.minute, minutes_label_encoder, minutes_one_hot_encoder)
 
             node_data_value = np.concatenate([node_data.loc[day_timestep].values, day_one_hot, hour_one_hot, minute_one_hot], axis=1)
-            input_embeddings[((node_idx * num_exp) + day_idx):((node_idx * num_exp) + day_idx + 1)] = torch.from_numpy(node_data_value[:-1])
-            target_embeddings[((node_idx*num_exp)+day_idx):((node_idx*num_exp)+day_idx+1)] = torch.from_numpy(node_data_value[1:, 0])
+            input_embeddings[((node_idx * num_exp) + day_idx):((node_idx * num_exp) + day_idx + 1)] = torch.from_numpy(node_data_value[:-6])
+            target_embeddings[((node_idx*num_exp)+day_idx):((node_idx*num_exp)+day_idx+1)] = torch.from_numpy(node_data_value[6:, 0])
 
             # neighbor embedding
             for neighbor_idx, (neighbor_id, neighbor_data) in enumerate(neighbors_data):
                 try:
                     neighbor_data_value = np.concatenate([neighbor_data.loc[day_timestep].values, day_one_hot, hour_one_hot, minute_one_hot], axis=1)
-                    neighbor_embeddings[((node_idx*num_exp)+day_idx), neighbor_idx] = torch.from_numpy(neighbor_data_value[:-1])
+                    neighbor_embeddings[((node_idx*num_exp)+day_idx), neighbor_idx] = torch.from_numpy(neighbor_data_value[:-6])
                 except Exception as e:
                     print(neighbor_idx, neighbor_id, day_idx)
                     print(e)

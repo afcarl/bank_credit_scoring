@@ -19,10 +19,10 @@ class SimpleGRU(BaseNet):
         self.rnn = nn.GRU(input_dim, hidden_dim,
                           num_layers=1,
                           batch_first=True)
-        self.app_rnn = nn.Sequential(nn.Dropout(dropout_prob),
-                                     nn.ELU())
+        self.app_rnn = nn.Sequential(nn.Dropout(dropout_prob))
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
         #                          nn.Tanh(),
@@ -66,6 +66,7 @@ class StructuralRNN(BaseNet):
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
                                  nn.ELU())
+
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
         #                          nn.ELU())
 
@@ -136,7 +137,8 @@ class NodeNeighborsInterpolation(BaseNet):
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim * (num_edge_types + 1), hidden_dim),
                                  nn.ReLU(),
-                                 nn.Linear(hidden_dim, output_dim))
+                                 nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
         self.name = "NodeNeighborsInterpolation"
 
 
@@ -180,7 +182,7 @@ class NodeInterpolation(BaseNet):
         super(NodeInterpolation, self).__init__()
         self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
                                       nn.Dropout(dropout_prob),
-                                      nn.ELU())
+                                      nn.ReLU())
 
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
