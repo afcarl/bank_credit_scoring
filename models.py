@@ -67,45 +67,76 @@ class TestNetAttention(BaseNet):
         output = self.dropout(output)
         return self.proj(output), weights
 
-class TestTimeAttention(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, nlayers, max_neighbors, time_steps, n_heads, dropout_prob=0.1):
-        super(TestTimeAttention, self).__init__()
-        self.NodeRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
-        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, nlayers, batch_first=True, bidirectional=False)
-        self.TimeAttention = TimeAttention(n_heads, hidden_dim, max_neighbors, time_steps, dropout_prob)
-        self.prj = nn.Linear(hidden_dim, output_dim)
-        self.name = "RNN" + self.TimeAttention.name
-        self.dropout = nn.Dropout(dropout_prob)
+class TestSingleAttention(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_head, time_window, temperature=1, dropout_prob=0.1):
+        super(TestSingleAttention, self).__init__()
+
+        self.NodeRNN = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.NodeRNN_trans = nn.Sequential(nn.ReLU(),
+                                           nn.Dropout(dropout_prob))
+
+        self.NeighborRNN = nn.GRU((input_dim*2) + 40, hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.NeighborRNN_trans = nn.Sequential(nn.ReLU(),
+                                               nn.Dropout(dropout_prob))
+
+        self.neigh_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=0.7, dropout=dropout_prob)
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+
+
+        self.name = "TestSingleAttention" + self.neigh_neigh_interaction.name
 
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.nlayers = nlayers
-        self.time_steps = time_steps
-        self.max_neighbors = max_neighbors
-        self.n_heads = n_heads
+        self.nlayers = 1
+        self.time_window = time_window
+        self.temperature = temperature
+        self.n_head = n_head
 
-        self.reset_parameters()
+    def forward(self, node_input, neighbors_input, node_hidden, neighbors_hidden, edge_weights, mask_neight, mask_time, target):
+        # param setup
+        use_cuda = next(self.parameters()).is_cuda
+        batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
+
+        if use_cuda:
+            mask_time = mask_time.cuda()
+            mask_neight = mask_neight.cuda()
 
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, s_len):
-        self.batch_size = node_input.size(0)
-        self.use_cuda = next(self.parameters()).is_cuda
-
-        neighbors_input = neighbors_input.view(-1, self.time_steps, self.input_dim)              # reduce batch dim
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
-        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
-        neighbors_output = neighbors_output.contiguous().view(self.batch_size, self.max_neighbors, self.time_steps, self.hidden_dim) # reshape to normal dim
-        attn_mask = get_attn_mask(node_input.size()[:-1], self.use_cuda)
+        node_output = self.NodeRNN_trans(node_output)
 
-        time_attention, time_weights = self.TimeAttention(node_output, neighbors_output, s_len, attn_mask=attn_mask)
+        neighbors_input = torch.cat((neighbors_input, edge_weights), dim=-1)
+        neighbors_input = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
+        neighbors_enc = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input), dim=-1)
+        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_enc, neighbors_hidden)
+        neighbors_output = self.NeighborRNN_trans(neighbors_output)
+        neighbors_output = torch.cat((node_output.unsqueeze(1), torch.stack(torch.chunk(neighbors_output, neigh_number, dim=0), dim=1)), dim=1)
 
-        output = self.prj(time_attention.view(-1, self.time_steps, self.hidden_dim))
-        output = torch.sum(output.view(self.batch_size, self.max_neighbors+1, -1), dim=1)
-        # output = torch.sum(output.view(self.batch_size, self.max_neighbors, -1), dim=1)
+
+        att_mask = mask_time.unsqueeze(-2).repeat(1, 1, neigh_number+1, 1)
+        mask_pad = torch.zeros(batch_size, 1).byte()
+        if use_cuda:
+            mask_pad = mask_pad.cuda()
+
+        mask_neight = torch.cat((mask_pad, mask_neight), dim=-1)
+        mask_neight = mask_neight.unsqueeze(-2).unsqueeze(-1).repeat(1, time_steps, 1, time_steps)
+        att_mask = att_mask.masked_fill_(mask_neight, 1).view(batch_size, time_steps, -1)
+        output, attention = self.neigh_neigh_interaction(node_output, neighbors_output, att_mask)
+
+        output = self.prj(output)
 
         output = output.squeeze()
-        return output, node_hidden, neighbors_hidden, time_weights.cpu()
+        return output, attention, None
+
+
+    def reset_parameters(self):
+        for p in self.parameters():
+            if len(p.data.shape) == 1:
+                p.data.fill_(0)
+            else:
+                torch.nn.init.xavier_normal(p.data)
+        self.neigh_neigh_interaction.layer_norm.gamma.data.fill_(1)
 
 
 class TranslatorJointAttention(BaseNet):
@@ -115,7 +146,7 @@ class TranslatorJointAttention(BaseNet):
                                       nn.ReLU(),
                                       nn.Dropout(dropout_prob))
 
-        self.neigh_enc = nn.Sequential(nn.Linear(input_dim * 2, hidden_dim),
+        self.neigh_enc = nn.Sequential(nn.Linear((input_dim * 2) + 40, hidden_dim),
                                        nn.ReLU(),
                                        nn.Dropout(dropout_prob))
 
@@ -151,6 +182,7 @@ class TranslatorJointAttention(BaseNet):
 
         node_output = self.node_enc(node_input)
 
+        neighbors_input = torch.cat((neighbors_input, edge_weights), dim=-1)
         neighbors_input = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
         neighbors_enc = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input), dim=-1)
         neighbors_output = self.neigh_enc(neighbors_enc)
@@ -190,14 +222,14 @@ class RNNJointAttention(BaseNet):
         self.NodeRNN_trans = nn.Sequential(nn.ReLU(),
                                            nn.Dropout(dropout_prob))
 
-        self.NeighborRNN = nn.GRU(input_dim*2, hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.NeighborRNN = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
         self.NeighborRNN_trans = nn.Sequential(nn.ReLU(),
                                                nn.Dropout(dropout_prob))
 
         self.neigh_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
-        self.node_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7, dropout=dropout_prob)
+        # self.node_neigh_interaction = TransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7, dropout=dropout_prob)
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim*2, output_dim))
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim//2),
         #                          nn.Tanh(),
@@ -222,13 +254,15 @@ class RNNJointAttention(BaseNet):
             mask_time = mask_time.cuda()
             mask_neight = mask_neight.cuda()
 
-        node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
-        node_output = self.NodeRNN_trans(node_output)
 
+        node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
+        # node_output = self.NodeRNN_trans(node_output)
+
+        # neighbors_input = torch.cat((neighbors_input, edge_weights), dim=-1)
         neighbors_input = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
-        neighbors_enc = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input), dim=-1)
-        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_enc, neighbors_hidden)
-        neighbors_output = self.NeighborRNN_trans(neighbors_output)
+        # neighbors_enc = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input), dim=-1)
+        neighbors_output, neighbors_hidden = self.NeighborRNN(neighbors_input, neighbors_hidden)
+        # neighbors_output = self.NeighborRNN_trans(neighbors_output)
         neighbors_output = torch.stack(torch.chunk(neighbors_output, neigh_number, dim=0), dim=1)
 
 
@@ -237,13 +271,13 @@ class RNNJointAttention(BaseNet):
         att_mask = att_mask.masked_fill_(mask_neight, 1).view(batch_size, time_steps, -1)
         neighbors_interaction, neigh_neigh_attention = self.neigh_neigh_interaction(node_output, neighbors_output, att_mask)
 
-        att_mask = mask_time.repeat(1, 1, 2)
-        output, node_neigh_attention = self.node_neigh_interaction(node_output, neighbors_interaction, att_mask)
-
-        output = self.prj(output)
+        # att_mask = mask_time.repeat(1, 1, 2)
+        # output, node_neigh_attention = self.node_neigh_interaction(node_output, neighbors_interaction, att_mask)
+        edges = torch.cat((node_output, neighbors_interaction), dim=-1)
+        output = self.prj(edges)
 
         output = output.squeeze()
-        return output, neigh_neigh_attention, node_neigh_attention
+        return output, neigh_neigh_attention, None
 
 
     def reset_parameters(self):
@@ -253,7 +287,7 @@ class RNNJointAttention(BaseNet):
             else:
                 torch.nn.init.xavier_normal(p.data)
         self.neigh_neigh_interaction.layer_norm.gamma.data.fill_(1)
-        self.node_neigh_interaction.layer_norm.gamma.data.fill_(1)
+        # self.node_neigh_interaction.layer_norm.gamma.data.fill_(1)
 
 class JordanRNNJointAttention(BaseNet):
     def __init__(self, input_dim, hidden_dim, output_dim, n_head, time_window, temperature=1, dropout_prob=0.1):
@@ -263,16 +297,15 @@ class JordanRNNJointAttention(BaseNet):
         self.NodeRNN_trans = nn.Sequential(nn.ReLU(),
                                            nn.Dropout(dropout_prob))
 
-        self.NeighborRNN = nn.GRUCell(input_dim*2, hidden_dim)
+        self.NeighborRNN = nn.GRUCell(input_dim, hidden_dim)
         self.NeighborRNN_trans = nn.Sequential(nn.ReLU(),
                                                nn.Dropout(dropout_prob))
 
         self.neigh_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, True, temperature=temperature, dropout=dropout_prob)
-        self.node_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7,
-                                                       dropout=dropout_prob)
+        # self.node_neigh_interaction = FeatureTransformerLayer(n_head, hidden_dim, hidden_dim, False, temperature=0.7,
+        #                                                dropout=dropout_prob)
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim*2, output_dim))
 
             # nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
             #                      nn.Tanh(),
@@ -310,19 +343,17 @@ class JordanRNNJointAttention(BaseNet):
             rec_outputs = rec_outputs.cuda()
             mask_neight = mask_neight.cuda()
 
+        # neighbors_input = torch.cat((neighbors_input, edge_weights), dim=-1)
         neighbors_input_ = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
-        neighbors_input_ = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input_), dim=-1)
+        # neighbors_input_ = torch.cat((node_input.repeat(neigh_number, 1, 1), neighbors_input_), dim=-1)
 
         for i in range(time_steps):
-            node_hidden = self.NodeRNN(torch.cat((node_input[:, i], rec_outputs), dim=-1), node_hidden)
-            # node_hidden = self.NodeRNN(node_input[:, i], node_hidden)
-            node_enc = self.NodeRNN_trans(node_hidden)
+            node_enc = self.NodeRNN(torch.cat((node_input[:, i], rec_outputs), dim=-1), node_hidden)
+            # node_enc = self.NodeRNN_trans(node_enc)
             node_output.append(node_enc)
 
-
-
-            neighbors_hidden = self.NeighborRNN(neighbors_input_[:, i], neighbors_hidden)
-            neighbors_enc = self.NeighborRNN_trans(neighbors_hidden)
+            neighbors_enc = self.NeighborRNN(neighbors_input_[:, i], neighbors_hidden)
+            # neighbors_enc = self.NeighborRNN_trans(neighbors_enc)
             neighbors_enc = torch.stack(torch.chunk(neighbors_enc, neigh_number, dim=0), dim=1)
             neighbors_output.append(neighbors_enc)
 
@@ -343,30 +374,31 @@ class JordanRNNJointAttention(BaseNet):
             neigh_neigh_attentions.append(att)
 
 
-            output, node_neigh_attention = self.node_neigh_interaction(node_output[i],
-                                                                       torch.cat((torch.stack((node_output[time_window:i + 1]), dim=1),
-                                                                                  torch.stack(neigh_neigh_outputs[time_window:i + 1], dim=1)),
-                                                                                 dim=1)
-                                                                       )
+            # output, node_neigh_attention = self.node_neigh_interaction(node_output[i],
+            #                                                            torch.cat((torch.stack((node_output[time_window:i + 1]), dim=1),
+            #                                                                       torch.stack(neigh_neigh_outputs[time_window:i + 1], dim=1)),
+            #                                                                      dim=1)
+            #                                                            )
 
-            output = self.prj(output)
+            edges = torch.cat((node_output[i], neigh_neigh_outputs[i]), dim=-1)
+            output = self.prj(edges)
             outputs.append(output)
-            att = torch.FloatTensor(batch_size, 2 * time_steps).zero_()
-            att[(1 - mask_time[:, i]).repeat(1, 2)] = node_neigh_attention.squeeze().cpu()
-            node_neigh_attentions.append(att)
+            # att = torch.FloatTensor(batch_size, 2 * time_steps).zero_()
+            # att[(1 - mask_time[:, i]).repeat(1, 2)] = node_neigh_attention.squeeze().cpu()
+            # node_neigh_attentions.append(att)
 
 
 
             # external recurrent connection
             upper_bound = i+1
             lower_bound = i-2 if i >= 3 else 0
-            diff = (torch.stack(outputs[lower_bound:upper_bound], dim=1)[:, 0] - target[:, lower_bound:upper_bound, 0])
+            diff = (torch.cat(outputs[lower_bound:upper_bound], dim=1) - target[:, lower_bound:upper_bound, 0])
             if i < 2:
                 rec_outputs[:, :upper_bound] = diff
             elif i < time_steps-1:
                 rec_outputs[:] = diff
 
-        return torch.stack(outputs, dim=1), torch.stack(neigh_neigh_attentions, dim=1), torch.stack(node_neigh_attentions, dim=1)
+        return torch.stack(outputs, dim=1), torch.stack(neigh_neigh_attentions, dim=1), None
 
     def reset_parameters(self):
         for p in self.parameters():
@@ -375,7 +407,7 @@ class JordanRNNJointAttention(BaseNet):
             else:
                 torch.nn.init.xavier_normal(p.data)
         self.neigh_neigh_interaction.layer_norm.gamma.data.fill_(1)
-        self.node_neigh_interaction.layer_norm.gamma.data.fill_(1)
+        # self.node_neigh_interaction.layer_norm.gamma.data.fill_(1)
 
     def init_hidden(self, batch_size):
         """

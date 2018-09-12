@@ -1,6 +1,7 @@
-from helper import CustomDataset, get_embeddings, get_customer_embeddings, ensure_dir
+from helper import CustomDataset, get_embeddings, get_customer_embeddings, ensure_dir, get_time_mask
 from torch.utils.data import DataLoader
-from baselines.models import SimpleGRU, StructuralRNN, NodeInterpolation, NodeNeighborsInterpolation
+import numpy as np
+from baselines.models import SimpleGRU, StructuralRNN, NodeInterpolation, NodeNeighborsInterpolation, GAT, SingleGAT, RNNGAT
 import torch.optim as optim
 from torch.autograd import Variable
 import torch
@@ -9,7 +10,6 @@ import random
 import argparse
 import visdom
 from datetime import datetime
-import pickle
 from os import path
 
 vis = visdom.Visdom(port=8080)
@@ -21,20 +21,23 @@ inv_softplus = lambda x: torch.log(torch.exp(x) - 1)
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default="customers", help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
+    parser.add_argument("--model", type=str, default="GAT", help="Directory containing dataset file")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default="sintetic", help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
 
-    parser.add_argument("--use_cuda", "-cuda", type=bool, default=True, help="Use cuda computation")
+    parser.add_argument("--use_cuda", "-cuda", type=bool, default=False, help="Use cuda computation")
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=932, help='Embedding size.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
+    parser.add_argument('--hidden_size', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--output_size', type=int, default=1, help='output size.')
     parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
+    parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
+    parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
     parser.add_argument('--epsilon', type=float, default=0.1, help='Epsilon value for Adam Optimizer.')
@@ -47,7 +50,8 @@ def __pars_args__():
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate, weight_decay=0.001)
+        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate)
+        # optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     else:
         optimizer = None
 
@@ -60,17 +64,28 @@ def setup_model(model, batch_size, args, is_training=True):
             b_target_sequence = Variable(target_embeddings[b_index])
             b_neighbors_sequence = Variable(neighbor_embeddings[b_index])
             b_edge_types = Variable(edge_types[b_index])
-            b_mask_neigh = Variable(mask_neigh[b_index])
+            b_mask_neigh = mask_neigh[b_index]
+            b_mask_time = get_time_mask(args.time_windows, b_neighbors_sequence.size())
 
             if args.use_cuda:
                 b_input_sequence = b_input_sequence.cuda()
                 b_target_sequence = b_target_sequence.cuda()
                 b_neighbors_sequence = b_neighbors_sequence.cuda()
                 b_edge_types = b_edge_types.cuda()
-                b_mask_neigh = mask_neigh[b_index]
+                b_mask_neigh = b_mask_neigh.cuda()
+                b_mask_time = b_mask_time.cuda()
 
-            node_hidden = model.init_hidden(batch_size)
-            neighbor_hidden = model.init_hidden(batch_size)
+
+            if args.model == "GAT" or args.model == "SingleGAT" or args.model == "RNNGAT":
+                node_hidden = model.init_hidden(batch_size * (args.max_neighbors+1))
+                neighbor_hidden = None
+            elif args.model == "StructuralRNN":
+                node_hidden = model.init_hidden(batch_size)
+                neighbor_hidden = model.init_hidden(batch_size)
+            else:
+                neighbor_hidden = None
+
+
 
             if is_training:
                 model.train()
@@ -78,7 +93,7 @@ def setup_model(model, batch_size, args, is_training=True):
             else:
                 model.eval()
 
-            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_edge_types, b_mask_neigh)
+            predict = model.forward(b_input_sequence, node_hidden, b_neighbors_sequence, neighbor_hidden, b_edge_types, b_mask_neigh, b_mask_time)
 
             if is_training:
                 loss = model.compute_loss(predict.squeeze(), b_target_sequence.squeeze())
@@ -128,7 +143,12 @@ if __name__ == "__main__":
     args = __pars_args__()
 
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(path.join("..", "data", args.data_dir), prefix=args.dataset_prefix)
-    model = StructuralRNN(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
+    if args.model == "GAT" or args.model == "SingleGAT" or args.model == "RNNGAT":
+        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, args.max_neighbors, dropout_prob=args.drop_prob)
+    elif args.model == "StructuralRNN" or args.model == "NodeNeighborsInterpolation":
+        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
+    else:
+        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, dropout_prob=args.drop_prob)
 
     model.reset_parameters()
 
@@ -161,8 +181,8 @@ if __name__ == "__main__":
 
         # plot loss
         vis.line(
-            Y=torch.FloatTensor(total_loss),
-            X=torch.LongTensor(range(i_iter + 1)),
+            Y=np.array(total_loss),
+            X=np.array(range(i_iter + 1)),
             opts=dict(
                     legend=["loss"],
                     title=model.name + " training loos",
@@ -173,8 +193,8 @@ if __name__ == "__main__":
             iter_eval, saved_weights = eval(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
             eval_loss.append(iter_eval)
             vis.line(
-                Y=torch.FloatTensor(eval_loss),
-                X=torch.LongTensor(range(0, i_iter + 1, args.eval_step)),
+                Y=np.array(eval_loss),
+                X=np.array(range(0, i_iter + 1, args.eval_step)),
                 opts=dict(legend=["RMSE"],
                           title=model.name + " eval loos",
                           showlegend=True),

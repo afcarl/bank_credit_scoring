@@ -3,22 +3,21 @@ import visdom
 import datetime
 import pickle
 import plotly.graph_objs as go
-import numpy as np
 import torch
 import collections
 import plotly.plotly as py
 import plotly.tools as tls
 import copy
-from functools import reduce
+import numpy as np
+np.set_printoptions(precision=6, suppress=True, linewidth=200)
+torch.set_printoptions(precision=6)
 BASE_DIR = "../../data"
-DATASET = "sintetic"
-MODEL = "RNN_TransformerAttention"
+DATASET = "customers"
+MODEL = "Jordan_RNN_FeatureTransformerAttention"
+
 
 Axes_data = collections.namedtuple("Axes_data", "val name")
 
-
-vis = visdom.Visdom(port=8080)
-EXP_NAME = "exp-{}".format(datetime.datetime.now())
 
 def _axisformat(x, opts):
     fields = ['type', 'tick', 'label', 'tickvals', 'ticklabels', 'tickmin', 'tickmax', 'tickfont']
@@ -36,7 +35,6 @@ def _axisformat(x, opts):
 
 fn_flatten = lambda l: [item for sublist in l for item in sublist]
 fn_y_name = lambda x: "Node" if x==0 else "Neighbor {}".format(x)
-
 def __reformat_duplicates__(a):
     counter = collections.Counter(a)
 
@@ -45,7 +43,7 @@ def __reformat_duplicates__(a):
             c = 0
             for idx, val in enumerate(a):
                 if val == item:
-                    a[idx] = val + str(c)
+                    a[idx] = val + "." + str(c)
                     c += 1
 
     return a
@@ -61,7 +59,7 @@ def plot_time_attention(weights, row_data, col_data, title, id, colorscale="Viri
 
     plot_data = [
         go.Heatmap(
-            z=weights.numpy(),
+            z=weights,
             x=col_data.val,
             y=row_data.val,
             colorscale=colorscale,
@@ -100,55 +98,37 @@ def plot_time_attention(weights, row_data, col_data, title, id, colorscale="Viri
 
 
 
-def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
-    weights_norm = weights.div(weights.max(dim=1)[0].unsqueeze(1))
-    if weights.size(1) == 4:
-        weights_norm = weights_norm.t()
-        rowname = ["neighbor {}".format(i) for i in range(1, 5)]
-    else:
-        rowname = ["node"]
-        rowname.extend(["neighbor {}".format(i) for i in range(1, 5)])
-
-    return vis.heatmap(
-        X=weights_norm,
-        opts=dict(
-            title=title,
-            columnnames=list(map(str, range(weights_norm.size(1)))),
-            rownames=rowname,
-            colormap=colorscale,
-            marginleft=80
-        ),
-        win="win:check-{}-id{}-{}".format(EXP_NAME,id,title)
-    )
-
 
 if __name__ == "__main__":
-    examples = torch.load(path_join(BASE_DIR, DATASET, MODEL, "simple__new_saved_eval_iter-10_temp-0.45.bin"))
-    for example_id, example in examples.items():
+    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_adam_temp-0.45.bin"), "rb"))
+    customers_id_to_idx = pickle.load(open(path_join(BASE_DIR, DATASET, "customers_id_to_idx.bin"), "rb"))
 
+    for example_id, example in examples.items():
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"].t()))
-        num_neighbors, time_steps = example["neighbors"].size()
-        edge_type, _ = example["edge_type"].size()
+        print("input:{}\nneighbors:{}".format(example["input"][:, 0], example["neighbors"][:, :, 0].t()))
+        num_neighbors, time_steps, n_feature = example["neighbors"].size()
+        edge_type = example["edge_type"][:, 0].numpy()
         values = []
-        temp = example["neighbors"].view(-1).numpy().tolist()
+        temp = example["neighbors"][:, :, 0].contiguous().view(-1).numpy().tolist()
         for i in range(num_neighbors):
             for j in range(time_steps):
-                values.append(int(temp[(i*10)+j]) + (0.01 * ((i*10)+j)))
-
+                values.append(int(temp[(i * time_steps) + j]) + (0.01 * ((i * time_steps) + j)))
 
         # plot_time_attention((example["node_edge_interaction"]/2) / (example["node_edge_interaction"]/2).sum(dim=-1, keepdim=True).expand(-1, 30),
         #                     torch.cat((example["input"].t(), example["neighbors"]), dim=0), "time_weight", id=example_id)
 
-        example["neigh_neigh_attention"] = (example["neigh_neigh_attention"]/4) / (example["neigh_neigh_attention"]/4).sum(dim=-1, keepdim=True).expand(-1, 40)
+        example["neigh_neigh_attention"] = (example["neigh_neigh_attention"] / 4) / (example["neigh_neigh_attention"] / 4).sum(dim=-1,
+                                                                                                                            keepdim=True).expand(
+            -1, num_neighbors * time_steps)
         row = Axes_data(val=list(range(time_steps)), name=list(map(lambda x: str(x), range(time_steps))))
-        col = Axes_data(val=values, name=list(map(lambda v: str(v)[:4], values)))
+        col = Axes_data(val=values, name=list(map(lambda v: str(v)[:5], values)))
         plot_time_attention(example["neigh_neigh_attention"], row, col, "neigh_neigh_interaction", id=example_id)
 
-        # example["node_neigh_attention"] = (example["node_neigh_attention"] / 4) / (example["node_neigh_attention"] / 4).sum(dim=-1,
-        #                                                                                                                        keepdim=True).expand(
-        #     -1, 20)
-        # time_steps, node_neigh_size = example["node_neigh_attention"].size()
-        # col = Axes_data(val=[i+0.1*j for i in range(2) for j in range(time_steps)],
-        #                 name=list(map(lambda x: "{}.{}".format(str(x)[0], str(x)[2]), [i+0.1*j for i in range(2) for j in range(time_steps)])))
-        # plot_time_attention(example["node_neigh_attention"], row, col, "node_neigh_interation", id=example_id)
+        example["node_neigh_attention"] = (example["node_neigh_attention"] / 4) / (example["node_neigh_attention"] / 4).sum(dim=-1,
+                                                                                                                            keepdim=True).expand(
+            -1, 2 * time_steps)
+        time_steps, node_neigh_size = example["node_neigh_attention"].size()
+        col = Axes_data(val=[i + 0.001 * j for i in range(2) for j in range(time_steps)],
+                        name=list(map(lambda x: "{}".format(str(x)[:5]),
+                                      [i + 0.001 * j for i in range(2) for j in range(time_steps)])))
+        plot_time_attention(example["node_neigh_attention"], row, col, "node_neigh_interation", id=example_id)

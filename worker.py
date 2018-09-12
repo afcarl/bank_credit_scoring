@@ -5,7 +5,7 @@ import random
 from helper import get_time_mask
 
 
-inv_softlog = lambda x: (exp(x) - 1)
+inv_softlog = lambda x: (exp(x) - 1) * 10
 inv_softplus = lambda x: log(exp(x) - 1)
 inv_softlog_1 = lambda x: exp(x) - 2
 
@@ -13,6 +13,7 @@ inv_softlog_1 = lambda x: exp(x) - 2
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
         optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate)
+        # optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     def execute(dataset, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neigh):
         _loss = 0
@@ -78,19 +79,30 @@ def setup_model(model, batch_size, args, is_training=True):
 
             elif random.random() > args.save_rate:
                 print(predict)
-                # print(b_target_sequence[0], predict[0])
                 for row, idx in enumerate(b_index):
-                    saved_weights[idx] = dict(
-                        id=idx,
-                        neigh_neigh_attention=neigh_neigh_attention[row].cpu(),
-                        node_neigh_attention=node_neigh_attention[row].cpu(),
-                        input=b_input_sequence[row].data.cpu(),
-                        target=target[row].data.cpu(),
-                        neighbors=b_neighbors_sequence[row].data.cpu().squeeze(),
-                        edge_type=b_edge_types[row].data.cpu().squeeze(),
-                        mask_neigh=b_mask_neigh[row].cpu(),
-                        predict=predict[row].data.cpu().squeeze()
-                    )
+                    if node_neigh_attention is not None:
+                        saved_weights[idx] = dict(
+                            id=idx,
+                            neigh_neigh_attention=neigh_neigh_attention[row].cpu(),
+                            node_neigh_attention=node_neigh_attention[row].cpu(),
+                            input=b_input_sequence[row].data.cpu(),
+                            target=target[row].data.cpu(),
+                            neighbors=b_neighbors_sequence[row].data.cpu().squeeze(),
+                            edge_type=b_edge_types[row].data.cpu().squeeze(),
+                            mask_neigh=b_mask_neigh[row].cpu(),
+                            predict=predict[row].data.cpu().squeeze()
+                        )
+                    else:
+                        saved_weights[idx] = dict(
+                            id=idx,
+                            neigh_neigh_attention=neigh_neigh_attention[row].cpu(),
+                            input=b_input_sequence[row].data.cpu(),
+                            target=target[row].data.cpu(),
+                            neighbors=b_neighbors_sequence[row].data.cpu().squeeze(),
+                            edge_type=b_edge_types[row].data.cpu().squeeze(),
+                            mask_neigh=b_mask_neigh[row].cpu(),
+                            predict=predict[row].data.cpu().squeeze()
+                        )
         _loss /= b_idx
         return _loss, saved_weights
     return execute

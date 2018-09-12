@@ -8,6 +8,8 @@ from itertools import tee
 from bidict import bidict
 from itertools import cycle
 from os.path import join as path_join
+from helper import CustomDataset, get_embeddings
+
 import torch
 vis = visdom.Visdom()
 
@@ -35,8 +37,8 @@ GET_DEFAULT_RISK_CUSTOMER = "SELECT r.customerid, r.date_ref, r.val_scoring_risk
 GET_RISK_CUSTOMER_BY_ACCORDATO = "SELECT r.customerid FROM risk AS r LEFT OUTER JOIN features AS f ON r.bankid = f.bankid AND r.customerid = f.customerid AND r.date_ref = f.date_ref WHERE f.cod_feature = 'CR0018' AND r.val_scoring_risk = 100 ORDER BY f.value1 desc, r.customerid asc, r.date_ref desc LIMIT 1000"
 GET_ACCORDATO_MASSIMO_BY_CUSTOMERID = "SELECT f.customerid, f.date_ref, f.value1, f.value2, f.cod_feature FROM features AS f WHERE f.cod_feature IN ('CR0018', 'CR0021', 'CR0040') AND f.customerid={}"
 
-cnx = mysql.connector.connect(**config)
-cursor = cnx.cursor(buffered=True)
+# cnx = mysql.connector.connect(**config)
+# cursor = cnx.cursor(buffered=True)
 
     
 def recompute_diff_data(customer_data, customer_neigh_data):
@@ -297,72 +299,90 @@ def plot_customer_default_timeseries(np_customer_data):
 
 
 f_parse_date = lambda x: "{}-{}-{}".format(x[:4], x[4:6], x[6:])
+
 if __name__ == "__main__":
-    try:
-        # risky_customer = set()
-        # LIMIT = 10
-        # cursor.execute(GET_RISK_CUSTOMER_BY_ACCORDATO)
-        # for customer_id, in cursor:
-        #     risky_customer.add(customer_id)
-        #     if len(risky_customer) == LIMIT:
-        #         break
-        #
-        # customer_id_2_customer_idx = pickle.load(open(path_join(".", "data", "customers", "customerid_to_idx.bin"), "rb"))
-
-        risky_customer = pickle.load(open("data/customers/temp/risky_customer_10.bin", "rb"))
-        # accordato_embedding = torch.FloatTensor(len(risky_customer), len(TIMESTAMP), 6).zero_()
-        # for idx, c_id in enumerate(sorted(risky_customer)):
-        #     cursor.execute(GET_ACCORDATO_MASSIMO_BY_CUSTOMERID.format(c_id))
-        #     c_accordato = torch.FloatTensor(len(TIMESTAMP), 6).zero_()
-        #     for customer_id, date_ref, value1, value2, cod_feature in cursor:
-        #         if cod_feature == 'CR0021':
-        #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), 2:4] = torch.FloatTensor([value1, value2])
-        #         elif cod_feature == 'CR0040':
-        #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), 4:] = torch.FloatTensor([value1, value2])
-        #         else:
-        #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), :2] = torch.FloatTensor([value1, value2])
-        #     accordato_embedding[idx] = c_accordato
-        #     print(idx)
-        #
-        #
-        # pickle.dump(accordato_embedding, open("data/customers/temp/accordato_embedding.bin","wb"))
-        # pickle.dump(risky_customer, open("data/customers/temp/risky_customer_10.bin", "wb"))
-
-        customer_id_2_customer_idx = pickle.load(open(path_join(".", "data", "customers", "customerid_to_idx.bin"), "rb"))
-
-        accordato_embedding = pickle.load(open("data/customers/temp/accordato_embedding.bin", "rb"))
-
-        risk_tsfm = h.RiskToTensor(path_join(".", "data", "customers"))
-        attribute_tsfm = h.AttributeToTensor(path_join(".", "data", "customers"))
-        input_embeddings, target_embeddings, neighbor_embeddings, seq_len = h.get_embeddings(path_join(".", "data", "customers"),
-                                                                                             "customers_formatted_attribute_risk.bin",
-                                                                                             "customeridx_to_neighborsidx.bin",
-                                                                                             24,
-                                                                                             risk_tsfm,
-                                                                                             attribute_tsfm)
-        customer_idx = [customer_id_2_customer_idx[c_id] for c_id in sorted(risky_customer)]
-        plot_customer_default_timeseries(torch.cat((input_embeddings[customer_idx], torch.log(accordato_embedding+1)), dim=2))
-
-        # customer_data = pickle.load(open(path_join("./data", "customers", "customers_risk.bin"), "rb"))
-        # extract_numpy_data_by_selected_timestemp(customer_data)
-        # np_customer_data = pickle.load(open("np_risk_customers_by_selected_timestemp.bin", "rb"))
-        # customer_to_id = pickle.load(open("customer_to_id.bin", "rb"))
-        # risky_customer_idx = np.array([customer_to_id[customer_id] for customer_id in risky_customer])
-        #
-        # plot_customer_default_timeseries(np_customer_data[risky_customer_idx])
+    data_dir = "utility"
+    train_file_name = "train_dataset"
+    eval_file_name = "eval_dataset"
+    test_file_name = "test_dataset"
 
 
+    input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(path_join("data", data_dir), prefix="")
 
+    print(input_embeddings.size())
 
+    train_dataset = CustomDataset(path_join("data", data_dir), train_file_name)
+    eval_dataset = CustomDataset(path_join("data", data_dir), eval_file_name)
+    test_dataset = CustomDataset(path_join("data", data_dir), test_file_name)
 
-
-
-
-
-
-
-
-
-    finally:
-        cursor.close()
-        cnx.close()
+    print("train: ", train_dataset.customers_list.shape)
+    print("eval: ", eval_dataset.customers_list.shape)
+    print("test: ", test_dataset.customers_list.shape)
+    # try:
+    #     # risky_customer = set()
+    #     # LIMIT = 10
+    #     # cursor.execute(GET_RISK_CUSTOMER_BY_ACCORDATO)
+    #     # for customer_id, in cursor:
+    #     #     risky_customer.add(customer_id)
+    #     #     if len(risky_customer) == LIMIT:
+    #     #         break
+    #     #
+    #     # customer_id_2_customer_idx = pickle.load(open(path_join(".", "data", "customers", "customerid_to_idx.bin"), "rb"))
+    #
+    #     risky_customer = pickle.load(open("data/customers/temp/risky_customer_10.bin", "rb"))
+    #     # accordato_embedding = torch.FloatTensor(len(risky_customer), len(TIMESTAMP), 6).zero_()
+    #     # for idx, c_id in enumerate(sorted(risky_customer)):
+    #     #     cursor.execute(GET_ACCORDATO_MASSIMO_BY_CUSTOMERID.format(c_id))
+    #     #     c_accordato = torch.FloatTensor(len(TIMESTAMP), 6).zero_()
+    #     #     for customer_id, date_ref, value1, value2, cod_feature in cursor:
+    #     #         if cod_feature == 'CR0021':
+    #     #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), 2:4] = torch.FloatTensor([value1, value2])
+    #     #         elif cod_feature == 'CR0040':
+    #     #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), 4:] = torch.FloatTensor([value1, value2])
+    #     #         else:
+    #     #             c_accordato[TIMESTAMP.index(f_parse_date(date_ref)), :2] = torch.FloatTensor([value1, value2])
+    #     #     accordato_embedding[idx] = c_accordato
+    #     #     print(idx)
+    #     #
+    #     #
+    #     # pickle.dump(accordato_embedding, open("data/customers/temp/accordato_embedding.bin","wb"))
+    #     # pickle.dump(risky_customer, open("data/customers/temp/risky_customer_10.bin", "wb"))
+    #
+    #     customer_id_2_customer_idx = pickle.load(open(path_join(".", "data", "customers", "customerid_to_idx.bin"), "rb"))
+    #
+    #     accordato_embedding = pickle.load(open("data/customers/temp/accordato_embedding.bin", "rb"))
+    #
+    #     risk_tsfm = h.RiskToTensor(path_join(".", "data", "customers"))
+    #     attribute_tsfm = h.AttributeToTensor(path_join(".", "data", "customers"))
+    #     input_embeddings, target_embeddings, neighbor_embeddings, seq_len = h.get_embeddings(path_join(".", "data", "customers"),
+    #                                                                                          "customers_formatted_attribute_risk.bin",
+    #                                                                                          "customeridx_to_neighborsidx.bin",
+    #                                                                                          24,
+    #                                                                                          risk_tsfm,
+    #                                                                                          attribute_tsfm)
+    #     customer_idx = [customer_id_2_customer_idx[c_id] for c_id in sorted(risky_customer)]
+    #     plot_customer_default_timeseries(torch.cat((input_embeddings[customer_idx], torch.log(accordato_embedding+1)), dim=2))
+    #
+    #     # customer_data = pickle.load(open(path_join("./data", "customers", "customers_risk.bin"), "rb"))
+    #     # extract_numpy_data_by_selected_timestemp(customer_data)
+    #     # np_customer_data = pickle.load(open("np_risk_customers_by_selected_timestemp.bin", "rb"))
+    #     # customer_to_id = pickle.load(open("customer_to_id.bin", "rb"))
+    #     # risky_customer_idx = np.array([customer_to_id[customer_id] for customer_id in risky_customer])
+    #     #
+    #     # plot_customer_default_timeseries(np_customer_data[risky_customer_idx])
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    # finally:
+    #     cursor.close()
+    #     cnx.close()

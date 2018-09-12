@@ -5,10 +5,165 @@ import torch
 from helper import rmse, AttrProxy, BaseNet, LayerNorm
 
 
+class GAT(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_neighbours, dropout_prob=0.1):
+        super(GAT, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.nlayers = 1
+        self.name = "Multi-head GAT"
+        self.n_head = 4
+
+        self.node_enc = nn.Parameter(torch.FloatTensor(self.n_head, input_dim, hidden_dim))
+        self.edge_att_enc = nn.Parameter(torch.FloatTensor(self.n_head, 2*hidden_dim, 1))
+
+        self.edge_att = nn.Softmax(dim=1)
+
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
+        batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
+        use_cuda = next(self.parameters()).is_cuda
+        node_mask = torch.zeros(batch_size, 1).byte()
+
+        if use_cuda:
+            node_mask = node_mask.cuda()
+
+        mask_neight = torch.cat((node_mask, mask_neight), dim=1)
+        mask_neight = mask_neight.unsqueeze(-1).unsqueeze(-1).expand(batch_size, neigh_number+1, time_steps, 1).repeat(self.n_head, 1, 1, 1)
+
+
+        node_input_s = node_input.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.input_dim)
+        neighbors_input_s = neighbors_input.repeat(self.n_head, 1, 1, 1).view(self.n_head, -1, self.input_dim)
+
+        node_enc = torch.bmm(node_input_s, self.node_enc).view(self.n_head * batch_size, time_steps, self.hidden_dim)
+        neigh_enc = torch.bmm(neighbors_input_s, self.node_enc).view(self.n_head * batch_size, neigh_number, time_steps, self.hidden_dim)
+        neigh_enc = torch.cat((node_enc.unsqueeze(1), neigh_enc), dim=1)
+
+
+        edges_enc = torch.cat((node_enc.unsqueeze(1).repeat(1, neigh_number+1, 1, 1), neigh_enc), dim=-1)
+        edges_enc = torch.bmm(edges_enc.view(self.n_head, -1, 2*self.hidden_dim), self.edge_att_enc).view(self.n_head * batch_size, neigh_number+1, time_steps, 1)
+        edges_enc.data.masked_fill_(mask_neight, -float('inf'))
+
+        edges_att = self.edge_att(edges_enc)
+
+        edge_rep = edges_att * neigh_enc
+        edge_rep = torch.nn.functional.relu(torch.stack(torch.sum(edge_rep, dim=1).split(batch_size, dim=0), dim=1).mean(dim=1))
+
+        output = self.prj(edge_rep)
+        return output
+
+
+
+class RNNGAT(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_neighbours, dropout_prob=0.1):
+        super(RNNGAT, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.nlayers = 1
+        self.name = "Recurrent Multi-head GAT"
+        self.n_head = 4
+
+
+        self.rnn_enc = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+
+        self.node_enc = nn.Parameter(torch.FloatTensor(self.n_head, hidden_dim, hidden_dim))
+        self.edge_att_enc = nn.Parameter(torch.FloatTensor(self.n_head, 2*hidden_dim, 1))
+
+        self.edge_att = nn.Softmax(dim=1)
+
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
+        batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
+        use_cuda = next(self.parameters()).is_cuda
+        node_mask = torch.zeros(batch_size, 1).byte()
+
+        if use_cuda:
+            node_mask = node_mask.cuda()
+
+        mask_neight = torch.cat((node_mask, mask_neight), dim=1)
+        mask_neight = mask_neight.unsqueeze(-1).unsqueeze(-1).expand(batch_size, neigh_number+1, time_steps, 1).repeat(self.n_head, 1, 1, 1)
+
+        neighbors_input = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
+
+        nodes_enc, node_hidden = self.rnn_enc(torch.cat((node_input, neighbors_input), dim=0), node_hidden)
+
+        node_input = nodes_enc[:batch_size]
+        neighbors_input = torch.stack(nodes_enc[batch_size:].split(batch_size, dim=0), dim=1)
+
+        node_input_s = node_input.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.hidden_dim)
+        neighbors_input_s = neighbors_input.repeat(self.n_head, 1, 1, 1).view(self.n_head, -1, self.hidden_dim)
+
+        node_enc = torch.bmm(node_input_s, self.node_enc).view(self.n_head * batch_size, time_steps, self.hidden_dim)
+        neigh_enc = torch.bmm(neighbors_input_s, self.node_enc).view(self.n_head * batch_size, neigh_number, time_steps, self.hidden_dim)
+        neigh_enc = torch.cat((node_enc.unsqueeze(1), neigh_enc), dim=1)
+
+
+        edges_enc = torch.cat((node_enc.unsqueeze(1).repeat(1, neigh_number+1, 1, 1), neigh_enc), dim=-1)
+        edges_enc = torch.bmm(edges_enc.view(self.n_head, -1, 2*self.hidden_dim), self.edge_att_enc).view(self.n_head * batch_size, neigh_number+1, time_steps, 1)
+        edges_enc.data.masked_fill_(mask_neight, -float('inf'))
+
+        edges_att = self.edge_att(edges_enc)
+
+        edge_rep = edges_att * neigh_enc
+        edge_rep = torch.nn.functional.relu(torch.stack(torch.sum(edge_rep, dim=1).split(batch_size, dim=0), dim=1).mean(dim=1))
+
+        output = self.prj(edge_rep)
+        return output
+
+class SingleGAT(BaseNet):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_neighbours, dropout_prob=0.1):
+        super(SingleGAT, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.nlayers = 1
+        self.name = "Single GAT"
+        self.n_head = 4
+
+        self.node_enc = nn.Linear(input_dim, hidden_dim)
+        self.edge_att_enc = nn.Linear(2*hidden_dim, 1)
+
+        self.edge_att = nn.Softmax(dim=1)
+
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
+        batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
+        use_cuda = next(self.parameters()).is_cuda
+        node_mask = torch.zeros(batch_size, 1).byte()
+
+        if use_cuda:
+            node_mask = node_mask.cuda()
+
+        mask_neight = torch.cat((node_mask, mask_neight), dim=1)
+        mask_neight = mask_neight.unsqueeze(-1).unsqueeze(-1).expand(batch_size, neigh_number+1, time_steps, 1)
+
+        node_enc = self.node_enc(node_input)
+        neigh_enc = self.node_enc(neighbors_input)
+        neigh_enc = torch.cat((node_enc.unsqueeze(1), neigh_enc), dim=1)
+
+
+        edges_enc = torch.cat((node_enc.unsqueeze(1).repeat(1, neigh_number+1, 1, 1), neigh_enc), dim=-1)
+        edges_enc = self.edge_att_enc(edges_enc)
+        edges_enc.data.masked_fill_(mask_neight, -float('inf'))
+
+        edges_att = self.edge_att(edges_enc)
+
+        edge_rep = edges_att * neigh_enc
+        edge_rep = torch.nn.functional.relu(torch.sum(edge_rep, dim=1))
+
+        output = self.prj(edge_rep)
+        return output
+
+
 class SimpleGRU(BaseNet):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, input_dim, hidden_dim, output_dim, num_edge_types, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, dropout_prob=0.1):
         super(SimpleGRU, self).__init__()
 
         self.input_dim = input_dim
@@ -31,7 +186,7 @@ class SimpleGRU(BaseNet):
 
 
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight):
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         """
         forward pass of the network
         :param input: input to the rnn
@@ -84,7 +239,7 @@ class StructuralRNN(BaseNet):
 
 
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight):
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         use_cuda = next(self.parameters()).is_cuda
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
         out_hidden = self.init_hidden(batch_size)
@@ -148,7 +303,7 @@ class NodeNeighborsInterpolation(BaseNet):
         self.num_edge_types = num_edge_types
         self.nlayers = 0
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight):
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         use_cuda = next(self.parameters()).is_cuda
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
 
@@ -178,7 +333,7 @@ class NodeNeighborsInterpolation(BaseNet):
 
 
 class NodeInterpolation(BaseNet):
-    def __init__(self, input_dim, hidden_dim, output_dim, num_edge_types, dropout_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, dropout_prob=0.1):
         super(NodeInterpolation, self).__init__()
         self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
                                       nn.Dropout(dropout_prob),
@@ -198,7 +353,7 @@ class NodeInterpolation(BaseNet):
         self.num_edge_types = num_edge_types
         self.criterion = nn.MSELoss()
 
-    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight):
+    def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
         node_output = self.node_prj(node_input)
         output = self.prj(node_output)
