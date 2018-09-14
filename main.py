@@ -21,7 +21,7 @@ EXP_NAME = "exp-{}".format(datetime.now())
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--data_dir", "-d_dir", type=str, default="sintetic", help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
@@ -123,5 +123,6 @@ if __name__ == "__main__":
 
     iter_test, saved_weights = test_fn(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
     print("test RMSE: {}".format(iter_test))
-    pickle.dump(saved_weights, open(ensure_dir(
-        path_join("data", args.data_dir, model.name, "{}_new_saved_test_adam_temp-{}.bin".format(args.dataset_prefix, args.temp))), "wb"))
+    torch.save(saved_weights, ensure_dir(path_join("data", args.data_dir, model.name, "{}_new_saved_test_adam_temp-{}.bin".format(args.dataset_prefix, args.temp))))
+
+    # pickle.dump(saved_weights, open(ensure_dir(path_join("data", args.data_dir, model.name, "{}_new_saved_test_adam_temp-{}.bin".format(args.dataset_prefix, args.temp))), "wb"))

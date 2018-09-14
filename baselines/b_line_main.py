@@ -23,7 +23,7 @@ def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
     parser.add_argument("--model", type=str, default="GAT", help="Directory containing dataset file")
     parser.add_argument("--data_dir", "-d_dir", type=str, default="sintetic", help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="simple_", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="noise_tr_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
@@ -50,8 +50,8 @@ def __pars_args__():
 
 def setup_model(model, batch_size, args, is_training=True):
     if is_training:
-        optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate)
-        # optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+        # optimizer = optim.Adagrad(model.parameters(), lr=args.learning_rate)
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     else:
         optimizer = None
 
