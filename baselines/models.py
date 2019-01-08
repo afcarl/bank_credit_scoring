@@ -16,11 +16,14 @@ class GAT(BaseNet):
         self.n_head = 4
 
         self.node_enc = nn.Parameter(torch.FloatTensor(self.n_head, input_dim, hidden_dim))
+        self.node_enc_trans = nn.Sequential(nn.Dropout(dropout_prob),
+                                            nn.ReLU())
         self.edge_att_enc = nn.Parameter(torch.FloatTensor(self.n_head, 2*hidden_dim, 1))
 
         self.edge_att = nn.Softmax(dim=1)
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
@@ -33,12 +36,16 @@ class GAT(BaseNet):
         mask_neight = torch.cat((node_mask, mask_neight), dim=1)
         mask_neight = mask_neight.unsqueeze(-1).unsqueeze(-1).expand(batch_size, neigh_number+1, time_steps, 1).repeat(self.n_head, 1, 1, 1)
 
+        # neighbors_input = torch.cat((neighbors_input, edge_types), dim=-1)
+        # node_input = torch.cat((node_input, Variable(torch.zeros((batch_size, time_steps, 40))).cuda()), dim=-1)
 
         node_input_s = node_input.repeat(self.n_head, 1, 1).view(self.n_head, -1, self.input_dim)
         neighbors_input_s = neighbors_input.repeat(self.n_head, 1, 1, 1).view(self.n_head, -1, self.input_dim)
 
         node_enc = torch.bmm(node_input_s, self.node_enc).view(self.n_head * batch_size, time_steps, self.hidden_dim)
+        node_enc = self.node_enc_trans(node_enc)
         neigh_enc = torch.bmm(neighbors_input_s, self.node_enc).view(self.n_head * batch_size, neigh_number, time_steps, self.hidden_dim)
+        neigh_enc = self.node_enc_trans(neigh_enc)
         neigh_enc = torch.cat((node_enc.unsqueeze(1), neigh_enc), dim=1)
 
 
@@ -70,25 +77,36 @@ class RNNGAT(BaseNet):
         self.rnn_enc = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
 
         self.node_enc = nn.Parameter(torch.FloatTensor(self.n_head, hidden_dim, hidden_dim))
+        self.node_enc_trans = nn.Sequential(nn.Dropout(dropout_prob),
+                                            nn.ReLU())
         self.edge_att_enc = nn.Parameter(torch.FloatTensor(self.n_head, 2*hidden_dim, 1))
 
         self.edge_att = nn.Softmax(dim=1)
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.GRU(hidden_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+        self.prj_trans = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                       nn.ELU())
+
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+        #                          nn.ELU())
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
         use_cuda = next(self.parameters()).is_cuda
         node_mask = torch.zeros(batch_size, 1).byte()
+        out_hidden = Variable(torch.zeros((self.nlayers, batch_size, self.hidden_dim)))
 
         if use_cuda:
             node_mask = node_mask.cuda()
+            out_hidden = out_hidden.cuda()
 
         mask_neight = torch.cat((node_mask, mask_neight), dim=1)
         mask_neight = mask_neight.unsqueeze(-1).unsqueeze(-1).expand(batch_size, neigh_number+1, time_steps, 1).repeat(self.n_head, 1, 1, 1)
 
+        # neighbors_input = torch.cat((neighbors_input, edge_types), dim=-1)
         neighbors_input = torch.cat(torch.split(neighbors_input, 1, dim=1), dim=0)[:, 0]
 
+        # node_input = torch.cat((node_input, Variable(torch.zeros((batch_size, time_steps, 40))).cuda()), dim=-1)
         nodes_enc, node_hidden = self.rnn_enc(torch.cat((node_input, neighbors_input), dim=0), node_hidden)
 
         node_input = nodes_enc[:batch_size]
@@ -98,7 +116,9 @@ class RNNGAT(BaseNet):
         neighbors_input_s = neighbors_input.repeat(self.n_head, 1, 1, 1).view(self.n_head, -1, self.hidden_dim)
 
         node_enc = torch.bmm(node_input_s, self.node_enc).view(self.n_head * batch_size, time_steps, self.hidden_dim)
+        node_enc = self.node_enc_trans(node_enc)
         neigh_enc = torch.bmm(neighbors_input_s, self.node_enc).view(self.n_head * batch_size, neigh_number, time_steps, self.hidden_dim)
+        neigh_enc = self.node_enc_trans(neigh_enc)
         neigh_enc = torch.cat((node_enc.unsqueeze(1), neigh_enc), dim=1)
 
 
@@ -109,9 +129,10 @@ class RNNGAT(BaseNet):
         edges_att = self.edge_att(edges_enc)
 
         edge_rep = edges_att * neigh_enc
-        edge_rep = torch.nn.functional.relu(torch.stack(torch.sum(edge_rep, dim=1).split(batch_size, dim=0), dim=1).mean(dim=1))
+        edge_rep = torch.nn.functional.elu(torch.stack(torch.sum(edge_rep, dim=1).split(batch_size, dim=0), dim=1).mean(dim=1))
 
-        output = self.prj(edge_rep)
+        output, out_hidden = self.prj(edge_rep, out_hidden)
+        output = self.prj_trans(output)
         return output
 
 class SingleGAT(BaseNet):

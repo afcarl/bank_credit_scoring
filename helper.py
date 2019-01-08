@@ -93,10 +93,12 @@ def get_temperature(max_temp, min_temp, decadicy_iteration, total_iterations=Non
 
 
 def mse(input, target):
-    return torch.mean((input - target) ** 2)
+    return torch.mean((input - target) ** 2, dim=1)
 
 def rmse(input, target):
-    return mse(input, target) ** 0.5
+    assert len(input.shape) == 2
+    assert len(target.shape) == 2
+    return torch.mean(mse(input, target) ** 0.5)
 
 def accuracy(predict, target):
     correct = (target.eq(predict.round())).sum()

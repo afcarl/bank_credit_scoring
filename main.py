@@ -20,8 +20,8 @@ EXP_NAME = "exp-{}".format(datetime.now())
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default="sintetic", help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="tr_", help="Prefix for the dataset")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default="utility", help="Directory containing dataset file")
+    parser.add_argument("--dataset_prefix", type=str, default="", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
@@ -30,12 +30,12 @@ def __pars_args__():
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--eval_batch_size', type=int, default=30, help='Batch size for eval.')
 
-    parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
-    parser.add_argument('--hidden_dim', type=int, default=5, help='Hidden state memory size.')
+    parser.add_argument('--input_dim', type=int, default=35, help='Embedding size.')
+    parser.add_argument('--hidden_dim', type=int, default=128, help='Hidden state memory size.')
     parser.add_argument('--output_dim', type=int, default=1, help='output size.')
-    parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
+    parser.add_argument('--time_windows', type=int, default=16, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
-    parser.add_argument('--drop_prob', type=float, default=0., help="Keep probability for dropout.")
+    parser.add_argument('--drop_prob', type=float, default=0.1, help="Keep probability for dropout.")
     parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
     parser.add_argument('--n_head', type=int, default=4, help="attention head number")
 
@@ -46,15 +46,16 @@ def __pars_args__():
 
 
     parser.add_argument('--eval_step', type=int, default=10, help='How often do an eval step')
-    parser.add_argument('--save_rate', type=float, default=0.5, help='How often do save an eval example')
+    parser.add_argument('--save_rate', type=float, default=0.9, help='How often do save an eval example')
     return parser.parse_args()
 
 
 
 if __name__ == "__main__":
     args = __pars_args__()
+    print(args.hidden_dim)
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(path_join("data", args.data_dir), prefix=args.dataset_prefix)
-    model = JordanRNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
+    model = RNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows, dropout_prob=args.drop_prob, temperature=args.temp)
 
     train_dataset = CustomDataset(path_join("data", args.data_dir), args.dataset_prefix + args.train_file_name)
     eval_dataset = CustomDataset(path_join("data", args.data_dir), args.dataset_prefix + args.eval_file_name)
@@ -108,21 +109,21 @@ if __name__ == "__main__":
                           showlegend=True),
                 win="win:eval-{}".format(EXP_NAME))
 
-            torch.save(saved_weights, ensure_dir(path_join("data", args.data_dir, model.name, "{}_new_saved_eval_iter-{}_temp-{}.bin".format(args.dataset_prefix, int(i_iter/args.eval_step), args.temp))))
+            torch.save(saved_weights, ensure_dir(path_join("data", args.data_dir, model.name, "{}_saved_eval_iter-{}_temp-{}_rec.bin".format(args.dataset_prefix, int(i_iter/args.eval_step), args.temp))))
 
             # pickle.dump(saved_weights, open(ensure_dir(path_join(args.data_dir, model.name, "{}saved_eval_iter-{}_temp-{}.bin".format(args.dataset_prefix, int(i_iter/args.eval_step), args.temp))), "wb"))
 
             if best_model > iter_eval:
                 print("save best model")
                 best_model = iter_eval
-                torch.save(model, path_join("data", args.data_dir, "{}.pt".format(model.name)))
+                torch.save(model, path_join("data", args.data_dir, "{}_hidden-{}_drop-{}_rec.pt".format(model.name, args.hidden_dim, args.drop_prob)))
 
     # test performance
-    model = torch.load(path_join("data", args.data_dir, "{}.pt".format(model.name)))
+    model = torch.load(path_join("data", args.data_dir, "{}_hidden-{}_drop-{}_rec.pt".format(model.name, args.hidden_dim, args.drop_prob)))
     test_fn = setup_model(model, args.eval_batch_size, args, False)
 
     iter_test, saved_weights = test_fn(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor)
-    print("test RMSE: {}".format(iter_test))
-    torch.save(saved_weights, ensure_dir(path_join("data", args.data_dir, model.name, "{}_new_saved_test_adam_temp-{}.bin".format(args.dataset_prefix, args.temp))))
+    print("{}_{} - test RMSE: {}".format(model.name, args.hidden_dim, iter_test))
+    torch.save(saved_weights, ensure_dir(path_join("data", args.data_dir, model.name, "{}_saved_test_adam_temp-{}_rec.bin".format(args.dataset_prefix, args.temp))))
 
     # pickle.dump(saved_weights, open(ensure_dir(path_join("data", args.data_dir, model.name, "{}_new_saved_test_adam_temp-{}.bin".format(args.dataset_prefix, args.temp))), "wb"))

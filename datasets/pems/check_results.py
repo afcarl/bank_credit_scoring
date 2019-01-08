@@ -100,13 +100,13 @@ def plot_time_attention(weights, row_data, col_data, title, id, colorscale="Viri
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_adam_temp-1.bin"), "rb"))
+    examples = torch.load(path_join(BASE_DIR, DATASET, MODEL, "_new_saved_test_adam_temp-0.45.bin"))
+
     station_id_to_exp_id = torch.load(path_join(BASE_DIR, DATASET, "station_id_to_exp_idx.pt"))
     station_to_idx = torch.load(path_join(BASE_DIR, DATASET,  "station_id_to_idx.pt"))
 
-    for example_id, example in examples.items():
-        if example_id < 6560:
-            continue
+    for example_id in np.random.choice(list(examples.keys()), 10, False):
+        example = examples[example_id]
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
         print("input:{}\nneighbors:{}".format(example["input"][:, 0], example["neighbors"][:, :, 0].t()))
         num_neighbors, time_steps, n_feature = example["neighbors"].size()
@@ -115,7 +115,7 @@ if __name__ == "__main__":
         temp = example["neighbors"][:, :, 0].contiguous().view(-1).numpy().tolist()
         for i in range(num_neighbors):
             for j in range(time_steps):
-                values.append(int(temp[(i * time_steps) + j]) + (0.01 * ((i * time_steps) + j)))
+                values.append(int(temp[(i * time_steps) + j]) + (0.001 * ((i * time_steps) + j)))
 
         # plot_time_attention((example["node_edge_interaction"]/2) / (example["node_edge_interaction"]/2).sum(dim=-1, keepdim=True).expand(-1, 30),
         #                     torch.cat((example["input"].t(), example["neighbors"]), dim=0), "time_weight", id=example_id)
@@ -127,11 +127,11 @@ if __name__ == "__main__":
         col = Axes_data(val=values, name=list(map(lambda v: str(v)[:5], values)))
         plot_time_attention(example["neigh_neigh_attention"], row, col, "neigh_neigh_interaction", id=example_id)
 
-        example["node_neigh_attention"] = (example["node_neigh_attention"] / 4) / (example["node_neigh_attention"] / 4).sum(dim=-1,
-                                                                                                                            keepdim=True).expand(
-            -1, 2 * time_steps)
-        time_steps, node_neigh_size = example["node_neigh_attention"].size()
-        col = Axes_data(val=[i + 0.001 * j for i in range(2) for j in range(time_steps)],
-                        name=list(map(lambda x: "{}".format(str(x)[:5]),
-                                      [i + 0.001 * j for i in range(2) for j in range(time_steps)])))
-        plot_time_attention(example["node_neigh_attention"], row, col, "node_neigh_interation", id=example_id)
+        # example["node_neigh_attention"] = (example["node_neigh_attention"] / 4) / (example["node_neigh_attention"] / 4).sum(dim=-1,
+        #                                                                                                                     keepdim=True).expand(
+        #     -1, 2 * time_steps)
+        # time_steps, node_neigh_size = example["node_neigh_attention"].size()
+        # col = Axes_data(val=[i + 0.001 * j for i in range(2) for j in range(time_steps)],
+        #                 name=list(map(lambda x: "{}".format(str(x)[:5]),
+        #                               [i + 0.001 * j for i in range(2) for j in range(time_steps)])))
+        # plot_time_attention(example["node_neigh_attention"], row, col, "node_neigh_interation", id=example_id)

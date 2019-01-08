@@ -100,10 +100,12 @@ def plot_time_attention(weights, row_data, col_data, title, id, colorscale="Viri
 
 
 if __name__ == "__main__":
-    examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "saved_test_adam_temp-0.45.bin"), "rb"))
+    examples = torch.load(path_join(BASE_DIR, DATASET, MODEL, "saved_test_adam_temp-0.45.bin"))
     customers_id_to_idx = pickle.load(open(path_join(BASE_DIR, DATASET, "customers_id_to_idx.bin"), "rb"))
 
-    for example_id, example in examples.items():
+    for example_id in np.random.choice(list(examples.keys()), 10, False):
+        example_id = 9979
+        example = examples[example_id]
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
         print("input:{}\nneighbors:{}".format(example["input"][:, 0], example["neighbors"][:, :, 0].t()))
         num_neighbors, time_steps, n_feature = example["neighbors"].size()
@@ -123,12 +125,3 @@ if __name__ == "__main__":
         row = Axes_data(val=list(range(time_steps)), name=list(map(lambda x: str(x), range(time_steps))))
         col = Axes_data(val=values, name=list(map(lambda v: str(v)[:5], values)))
         plot_time_attention(example["neigh_neigh_attention"], row, col, "neigh_neigh_interaction", id=example_id)
-
-        example["node_neigh_attention"] = (example["node_neigh_attention"] / 4) / (example["node_neigh_attention"] / 4).sum(dim=-1,
-                                                                                                                            keepdim=True).expand(
-            -1, 2 * time_steps)
-        time_steps, node_neigh_size = example["node_neigh_attention"].size()
-        col = Axes_data(val=[i + 0.001 * j for i in range(2) for j in range(time_steps)],
-                        name=list(map(lambda x: "{}".format(str(x)[:5]),
-                                      [i + 0.001 * j for i in range(2) for j in range(time_steps)])))
-        plot_time_attention(example["node_neigh_attention"], row, col, "node_neigh_interation", id=example_id)
