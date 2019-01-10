@@ -12,12 +12,12 @@ import copy
 from functools import reduce
 BASE_DIR = "../../data"
 DATASET = "sintetic"
-MODEL = "Jordan_RNN_FeatureTransformerAttention"
+MODEL = "Jordan_RNN_FeatureTransformerAttention_simple_dynamic_neigh-4_rel-3"
 
 Axes_data = collections.namedtuple("Axes_data", "val name")
 
 
-vis = visdom.Visdom(port=8080)
+vis = visdom.Visdom(port=8097)
 EXP_NAME = "exp-{}".format(datetime.datetime.now())
 
 def _axisformat(x, opts):
@@ -124,11 +124,11 @@ def plot_heatmap(weights, title, id=0, colorscale="Viridis"):
 
 if __name__ == "__main__":
     # examples = pickle.load(open(path_join(BASE_DIR, DATASET, MODEL, "simple__new_saved_test_adam_temp-0.45.bin"), "rb"))
-    examples = torch.load(path_join(BASE_DIR, DATASET, MODEL, "noise_tr__new_saved_test_adam_temp-0.45.bin"))
+    examples = torch.load(path_join(BASE_DIR, DATASET, MODEL, "simple_dynamic_neigh-4_rel-3_new_saved_eval_iter-8_temp-0.45.bin"))
     for example_id, example in examples.items():
 
         print("idx:{}\ttarget:{}\tpredicted:{}".format(example["id"], example["target"], example["predict"]))
-        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"].t()))
+        print("input:{}\nneighbors:{}".format(example["input"], example["neighbors"]))
         num_neighbors, time_steps = example["neighbors"].size()
         edge_type, _ = example["edge_type"].size()
         values = []
@@ -141,9 +141,11 @@ if __name__ == "__main__":
         # plot_time_attention((example["node_edge_interaction"]/2) / (example["node_edge_interaction"]/2).sum(dim=-1, keepdim=True).expand(-1, 30),
         #                     torch.cat((example["input"].t(), example["neighbors"]), dim=0), "time_weight", id=example_id)
 
-        example["neigh_neigh_attention"] = (example["neigh_neigh_attention"]/4) / (example["neigh_neigh_attention"]/4).sum(dim=-1, keepdim=True).expand(-1, 40)
+        # example["neigh_neigh_attention"] = (example["neigh_neigh_attention"]/4) / (example["neigh_neigh_attention"]/4).sum(dim=-1, keepdim=True).expand(-1, 40)
+        example["neigh_neigh_attention"] = (example["neigh_neigh_attention"] / 4)
         row = Axes_data(val=list(range(time_steps)), name=list(map(lambda x: str(x), range(time_steps))))
-        col = Axes_data(val=values, name=list(map(lambda v: str(v)[:4], values)))
+        # col = Axes_data(val=list(range(1,1001)), name=list(map(lambda v: str(v)[:4], values)))
+        col = Axes_data(val=list(range(1, 41)), name=list(range(1, 41)))
         plot_time_attention(example["neigh_neigh_attention"], row, col, "neigh_neigh_interaction", id=example_id)
 
         # example["node_neigh_attention"] = (example["node_neigh_attention"] / 4) / (example["node_neigh_attention"] / 4).sum(dim=-1,

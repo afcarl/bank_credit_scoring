@@ -6,7 +6,7 @@ from collections import OrderedDict
 from bidict import bidict
 import torch
 import networkx as nx
-# from geopy.distance import geodesic
+from geopy.distance import geodesic
 import numpy as np
 from functools import partial
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -47,7 +47,7 @@ def read_stations():
     read the stations and check the data availability
     :return: 
     """
-    stations = pd.read_csv(path.join(BASE_DIR, "pems", "station_comp.csv"), index_col="ID")
+    stations = pd.read_csv(path.join(BASE_DIR, "pems", "stations_comp.csv"), index_col="ID")
     # for idx, id in enumerate(stations.index):
     #     if not path.isfile(path.join(BASE_DIR, "pems", "stations", "{}.csv".format(id))):
     #         print("missing {}-{}".format(idx, id))
@@ -243,43 +243,45 @@ def split_training_test_dataset(site_to_idx, site_to_exp_idx, train_stations, ev
 
 if __name__ == "__main__":
     stations = read_stations()
-    # G, stations_distances = compute_graph(stations)
+    G, stations_distances = compute_graph(stations)
+    torch.save(G, ensure_dir(path.join(BASE_DIR, "pems", "temp", "graph.pt")))
+    torch.save(stations_distances, ensure_dir(path.join(BASE_DIR, "pems", "temp", "station_dist.pt")))
 
-    G = torch.load(path.join(BASE_DIR, "pems", "temp", "graph.pt"))
-
-    input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx = generate_embedding(stations, G)
-
-    torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "input_embeddings.pt")))
-    torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "target_embeddings.pt")))
-    torch.save(neighbor_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "neighbor_embeddings.pt")))
-    torch.save(edge_type, ensure_dir(path.join(BASE_DIR, "pems", "edge_type.pt")))
-    torch.save(neigh_mask, ensure_dir(path.join(BASE_DIR, "pems", "mask_neighbor.pt")))
-    torch.save(station_id_to_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_idx.pt")))
-    torch.save(station_id_to_exp_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt")))
-
-    station_id_to_idx = torch.load(path.join(BASE_DIR, "pems", "station_id_to_idx.pt"))
-    station_id_to_exp_idx = torch.load(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt"))
-
-
-    stations_id = sorted(stations.index.values)
-    train_stations = np.random.choice(stations_id, 2500, replace=False)
-    for station_id in train_stations:
-        stations_id.remove(station_id)
-
-    eval_stations = np.random.choice(stations_id, 600, replace=False)
-    for station_id in eval_stations:
-        stations_id.remove(station_id)
-
-
-
-
-
-    train_dataset, eval_dataset, test_dataset = split_training_test_dataset(station_id_to_idx, station_id_to_exp_idx,
-                                                                            train_stations, eval_stations, stations_id)
-
-    torch.save(train_dataset, ensure_dir(path.join(BASE_DIR, "pems", "train_dataset.pt")))
-    torch.save(eval_dataset, ensure_dir(path.join(BASE_DIR, "pems", "eval_dataset.pt")))
-    torch.save(test_dataset, ensure_dir(path.join(BASE_DIR, "pems", "test_dataset.pt")))
+    # G = torch.load(path.join(BASE_DIR, "pems", "temp", "graph.pt"))
+    #
+    # input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx = generate_embedding(stations, G)
+    #
+    # torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "input_embeddings.pt")))
+    # torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "target_embeddings.pt")))
+    # torch.save(neighbor_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "neighbor_embeddings.pt")))
+    # torch.save(edge_type, ensure_dir(path.join(BASE_DIR, "pems", "edge_type.pt")))
+    # torch.save(neigh_mask, ensure_dir(path.join(BASE_DIR, "pems", "mask_neighbor.pt")))
+    # torch.save(station_id_to_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_idx.pt")))
+    # torch.save(station_id_to_exp_idx, ensure_dir(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt")))
+    #
+    # station_id_to_idx = torch.load(path.join(BASE_DIR, "pems", "station_id_to_idx.pt"))
+    # station_id_to_exp_idx = torch.load(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt"))
+    #
+    #
+    # stations_id = sorted(stations.index.values)
+    # train_stations = np.random.choice(stations_id, 2500, replace=False)
+    # for station_id in train_stations:
+    #     stations_id.remove(station_id)
+    #
+    # eval_stations = np.random.choice(stations_id, 600, replace=False)
+    # for station_id in eval_stations:
+    #     stations_id.remove(station_id)
+    #
+    #
+    #
+    #
+    #
+    # train_dataset, eval_dataset, test_dataset = split_training_test_dataset(station_id_to_idx, station_id_to_exp_idx,
+    #                                                                         train_stations, eval_stations, stations_id)
+    #
+    # torch.save(train_dataset, ensure_dir(path.join(BASE_DIR, "pems", "train_dataset.pt")))
+    # torch.save(eval_dataset, ensure_dir(path.join(BASE_DIR, "pems", "eval_dataset.pt")))
+    # torch.save(test_dataset, ensure_dir(path.join(BASE_DIR, "pems", "test_dataset.pt")))
 
 
 

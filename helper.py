@@ -5,8 +5,10 @@ from torch.utils.data import Dataset
 from collections import namedtuple
 import torch
 import pickle
-import msgpack
 import numpy as np
+
+
+DatasetInfo = namedtuple("DatasetInfo", ["name", "neigh", "relevant_neigh"])
 
 TIMESTAMP = ["2016-06-30", "2016-07-31", "2016-08-31", "2016-09-30", "2016-10-31", "2016-11-30", "2016-12-31",
              "2017-01-31", "2017-02-28", "2017-03-31", "2017-04-30", "2017-05-31", "2017-06-30"]
@@ -22,14 +24,14 @@ TENSOR_TYPE = dict(f_tensor=torch.cuda.FloatTensor if use_cuda else torch.FloatT
                    u_tensor=torch.cuda.ByteTensor if use_cuda else torch.ByteTensor)
 
 
-def msg_unpack(file_name):
-    with open(file_name, 'rb') as infile:
-        data = msgpack.unpack(infile)
-    return data
-
-def msg_pack(data, file_name):
-    with open(file_name, "wb") as outfile:
-        msgpack.pack(data, outfile)
+# def msg_unpack(file_name):
+#     with open(file_name, 'rb') as infile:
+#         data = msgpack.unpack(infile)
+#     return data
+#
+# def msg_pack(data, file_name):
+#     with open(file_name, "wb") as outfile:
+#         msgpack.pack(data, outfile)
 
 
 def get_param_numbers(model):
@@ -93,6 +95,7 @@ def get_temperature(max_temp, min_temp, decadicy_iteration, total_iterations=Non
 
 
 def mse(input, target):
+    # return torch.mean(torch.sum((input - target) ** 2, dim=1), dim=0)
     return torch.mean((input - target) ** 2)
 
 def rmse(input, target):
@@ -115,11 +118,11 @@ def sample_gumbel(shape, eps=1e-20):
 def get_embeddings(data_dir, prefix=""):
 
 
-    input_embeddings = torch.load(os.path.join(data_dir, prefix + "input_embeddings.pt"))
-    target_embeddings = torch.load(os.path.join(data_dir, prefix + "target_embeddings.pt"))
-    neighbor_embeddings = torch.load(os.path.join(data_dir, prefix + "neighbor_embeddings.pt"))
-    mask_neighbor = torch.load(os.path.join(data_dir, prefix + "mask_neighbor.pt"))
-    edge_type = torch.load(os.path.join(data_dir, prefix + "edge_type.pt"))
+    input_embeddings = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "input_embeddings.pt")))
+    target_embeddings = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "target_embeddings.pt")))
+    neighbor_embeddings = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "neighbor_embeddings.pt")))
+    mask_neighbor = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "mask_neighbor.pt")))
+    edge_type = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "edge_type.pt")))
 
 
     if target_embeddings.dim() == 2:
@@ -169,7 +172,7 @@ def get_customer_embeddings(data_dir, prefix=""):
 
 
 
-class CustomDataset(Dataset):
+class CDataset(Dataset):
     def __init__(self, base_path, file_name, extension="pt"):
         self.customers_list = torch.LongTensor(torch.load(os.path.join(base_path, "{}.{}".format(file_name, extension))))
 
@@ -255,7 +258,7 @@ class BiLinearProjection(torch.nn.Module):
 class BaseNet(torch.nn.Module):
     def __init__(self):
         super(BaseNet, self).__init__()
-        self.criterion = torch.nn.MSELoss()
+        self.criterion = torch.nn.MSELoss(reduction='mean')
 
     def reset_parameters(self):
         """
@@ -264,9 +267,9 @@ class BaseNet(torch.nn.Module):
         """
         for p in self.parameters():
             if len(p.data.shape) == 1:
-                p.data.fill_(0)
+                torch.nn.init.constant_(p, 0)
             else:
-                torch.nn.init.xavier_normal(p.data)
+                torch.nn.init.xavier_normal_(p)
 
     def init_hidden(self, batch_size):
         """
@@ -278,9 +281,7 @@ class BaseNet(torch.nn.Module):
         if self.nlayers == 0:
             return None
 
-        hidden = torch.autograd.Variable(torch.zeros((self.nlayers, batch_size, self.hidden_dim)))
-        if torch.cuda.is_available():
-            hidden = hidden.cuda()
+        hidden = torch.nn.Parameter(torch.zeros((self.nlayers, batch_size, self.hidden_dim)))
         return hidden
 
         # return Variable(weight.new(batch_size, self.hidden_dim).zero_())
