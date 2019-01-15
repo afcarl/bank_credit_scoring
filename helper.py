@@ -219,10 +219,9 @@ class PositionwiseFeedForward(torch.nn.Module):
         self.layer_norm = LayerNorm(d_hid)
 
     def forward(self, x):
-        residual = x
         output = self.w_1(x.transpose(1, 2))
         output = self.w_2(output).transpose(2, 1)
-        return self.layer_norm(output + residual)
+        return output
 
 
 class LayerNorm(torch.nn.Module):

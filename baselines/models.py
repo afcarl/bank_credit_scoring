@@ -21,18 +21,19 @@ class GAT(BaseNet):
             [nn.Parameter(torch.FloatTensor(2*hidden_dim, 1)) for i in range(self.n_head)])
 
         self.edge_att = nn.Softmax(dim=1)
-
+        self.node_prj = nn.Sequential(nn.Linear(hidden_dim * 4, hidden_dim), nn.ReLU())
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
-        node_mask = torch.zeros(batch_size, 1).byte()
+        node_mask = torch.zeros(batch_size, 1).byte().to(node_input.device)
 
 
         mask_neight = torch.cat((node_mask, mask_neight), dim=1)
         mask_neight = mask_neight.unsqueeze(-1).unsqueeze(-1).expand(batch_size, neigh_number+1, time_steps, 1)
 
 
+        x = torch.cat((node_input.unsqueeze(1), neighbors_input), dim=1)
         edge_rep = []
         for i in range(self.n_head):
             node_enc = torch.matmul(node_input, self.node_enc[i])
@@ -46,9 +47,9 @@ class GAT(BaseNet):
             edges_att = self.edge_att(edges_enc)
             edge_rep.append(edges_att * neigh_enc)
 
-        edge_rep = torch.mean(torch.sum(torch.stack(edge_rep), dim=2), dim=0)
 
-        output = self.prj(edge_rep)
+        node_rep = self.node_prj(torch.cat(edge_rep, dim=-1).sum(dim=1))
+        output = self.prj(node_rep)
         return output
 
 
@@ -66,14 +67,46 @@ class RNNGAT(BaseNet):
 
         self.rnn_enc = nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
 
-        self.node_enc = nn.Parameter(torch.FloatTensor(self.n_head, hidden_dim, hidden_dim))
-        self.edge_att_enc = nn.Parameter(torch.FloatTensor(self.n_head, 2*hidden_dim, 1))
+        self.node_enc = torch.nn.ModuleList([nn.GRU(input_dim, hidden_dim, 1, batch_first=True, bidirectional=False)
+                                                for i in range(self.n_head)])
+        self.a = torch.nn.ParameterList(
+            [nn.Parameter(torch.FloatTensor(2 * hidden_dim, 1)) for i in range(self.n_head)])
 
         self.edge_att = nn.Softmax(dim=1)
 
+        self.node_prj = nn.Sequential(nn.Linear(hidden_dim * 4, hidden_dim), nn.ReLU())
         self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
+
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
+
+        batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
+        node_mask = torch.zeros(batch_size, 1).byte().to(node_input.device)
+
+        mask_neight = torch.cat((node_mask, mask_neight), dim=1)
+        mask_neight = mask_neight.unsqueeze(-1).unsqueeze(-1).expand(batch_size, neigh_number + 1, time_steps, 1)
+        edge_rep = []
+
+        neigh_inp = torch.cat((node_input.unsqueeze(1), neighbors_input), dim=1)
+        neigh_inp = torch.cat(torch.split(neigh_inp, 1, dim=1), dim=0)[:, 0]
+        for i in range(self.n_head):
+            neigh_enc, _ = self.node_enc[i](neigh_inp, node_hidden[i])
+            neigh_enc = torch.stack(torch.chunk(neigh_enc, neigh_number + 1, dim=0), dim=1)
+            node_enc = neigh_enc[:, 0]
+
+            edges_enc = torch.cat((node_enc.unsqueeze(1).repeat(1, neigh_number + 1, 1, 1), neigh_enc), dim=-1)
+            edges_enc = torch.matmul(edges_enc, self.a[i])
+            edges_enc = edges_enc.data.masked_fill_(mask_neight, -float('inf'))
+
+            edges_att = self.edge_att(edges_enc)
+            edge_rep.append(edges_att * neigh_enc)
+
+        output = self.node_prj(torch.cat(edge_rep, dim=-1).sum(dim=1))
+        output = self.prj(output)
+        return output
+
+
+
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
         use_cuda = next(self.parameters()).is_cuda
         node_mask = torch.zeros(batch_size, 1).byte()
@@ -128,8 +161,7 @@ class SimpleGRU(BaseNet):
                           batch_first=True)
         self.app_rnn = nn.Sequential(nn.Dropout(dropout_prob))
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
         #                          nn.Tanh(),
@@ -171,8 +203,9 @@ class StructuralRNN(BaseNet):
         self.app_outRNN = nn.Sequential(nn.Dropout(dropout_prob),
                                              nn.ReLU())
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-                                 nn.ELU())
+        self.app_outRNN = nn.Sequential(nn.Dropout(dropout_prob))
+
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
         #                          nn.ELU())
@@ -202,7 +235,7 @@ class StructuralRNN(BaseNet):
             out_hidden = out_hidden.cuda()
 
         node_output, node_hidden = self.NodeRNN(node_input, node_hidden)
-        node_output = self.app_NodeRNN(node_output)
+        # node_output = self.app_NodeRNN(node_output)
 
         neighbors_hidden = neighbors_hidden.unsqueeze(0).expand(self.num_edge_types, -1, -1, -1)
         edge_types = edge_types.unsqueeze(-1)
@@ -215,7 +248,7 @@ class StructuralRNN(BaseNet):
 
         for t_idx in range(self.num_edge_types):
             output_group_by_type, hidden_group_by_type = self.NeighborRNN[t_idx](neighbors_input[:, :, t_idx], neighbors_hidden[t_idx])
-            output_group_by_type = self.app_NeighborRNN(output_group_by_type)
+            # output_group_by_type = self.app_NeighborRNN(output_group_by_type)
             output_group_by_type = output_group_by_type * edge_mask[:, :, t_idx]
             out_output[:, :, t_idx * self.hidden_dim:(t_idx + 1) * self.hidden_dim] = output_group_by_type
 

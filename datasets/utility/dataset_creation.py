@@ -302,7 +302,7 @@ if __name__ == "__main__":
                                                                                                                 tz_onehot,
                                                                                                                 seq_len=16)
 
-    torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "utility", "input_embeddings.pt")))
+    torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "utility", "utility_input_embeddings.pt")))
     torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, "utility", "target_embeddings.pt")))
     torch.save(neighbor_embeddings, ensure_dir(path.join(BASE_DIR, "utility", "neighbor_embeddings.pt")))
     torch.save(edge_types, ensure_dir(path.join(BASE_DIR, "utility", "edge_type.pt")))

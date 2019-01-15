@@ -21,9 +21,9 @@ inv_softplus = lambda x: torch.log(torch.exp(x) - 1)
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--model", type=str, default="NodeNeighborsInterpolation", help="Directory containing dataset file")
+    parser.add_argument("--model", type=str, default="SimpleGRU", help="Directory containing dataset file")
     parser.add_argument("--data_dir", "-d_dir", type=str, default="sintetic", help="Directory containing dataset file")
-    parser.add_argument("--dataset_prefix", type=str, default="simple_dynamic_neigh-4_rel-3", help="Prefix for the dataset")
+    parser.add_argument("--dataset_prefix", type=str, default="noise_tr_neigh-4_rel-3", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
     parser.add_argument("--test_file_name", "-test_fn", type=str, default="test_dataset", help="Test file name")
@@ -42,7 +42,7 @@ def __pars_args__():
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='learning rate (default: 0.001)')
     parser.add_argument('--epsilon', type=float, default=0.1, help='Epsilon value for Adam Optimizer.')
     parser.add_argument('--max_grad_norm', type=float, default=30.0, help="Clip gradients to this norm.")
-    parser.add_argument('--n_iter', type=int, default=102, help="Iteration number.")
+    parser.add_argument('--n_iter', type=int, default=101, help="Iteration number.")
     parser.add_argument('--eval_step', type=int, default=10, help='How often do an eval step')
     parser.add_argument('--save_rate', type=float, default=0.9, help='How often do save an eval example')
     parser.add_argument('--device', type=int, default=0, help='GPU device')
@@ -68,12 +68,9 @@ def setup_model(model, batch_size, args, is_training=True):
             b_mask_neigh = mask_neigh[b_index].to(device)
             b_mask_time = get_time_mask(args.time_windows, b_neighbors_sequence.size()).to(device)
 
-            node_hidden = model.init_hidden(batch_size)
-            neighbor_hidden = model.init_hidden(batch_size * args.max_neighbors)
-
 
             if args.model == "RNNGAT":
-                node_hidden = model.init_hidden(batch_size * (args.max_neighbors+1)).to(device)
+                node_hidden = [model.init_hidden(batch_size * (args.max_neighbors+1)).to(device) for i in range(4)]
                 neighbor_hidden = None
             elif args.model == "StructuralRNN":
                 node_hidden = model.init_hidden(batch_size).to(device)
@@ -82,7 +79,7 @@ def setup_model(model, batch_size, args, is_training=True):
                 node_hidden = model.init_hidden(batch_size).to(device)
                 neighbor_hidden = None
             else:
-                neighbor_hidden = None
+                node_hidden = None
                 neighbor_hidden = None
 
 
@@ -147,14 +144,6 @@ if __name__ == "__main__":
 
 
     input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor = get_embeddings(path.join("..", "data", args.data_dir), prefix=args.dataset_prefix)
-    if args.model == "GAT" or args.model == "SingleGAT" or args.model == "RNNGAT":
-        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, args.max_neighbors, dropout_prob=args.drop_prob)
-    elif args.model == "StructuralRNN" or args.model == "NodeNeighborsInterpolation":
-        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
-    else:
-        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, dropout_prob=args.drop_prob)
-
-    model.reset_parameters()
 
     train_dataset = CDataset(path.join("..", "data", args.data_dir), "{}_{}".format(args.dataset_prefix, args.train_file_name))
     eval_dataset = CDataset(path.join("..", "data", args.data_dir), "{}_{}".format(args.dataset_prefix, args.eval_file_name))
@@ -167,57 +156,75 @@ if __name__ == "__main__":
     test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=1,
                                  drop_last=True)
 
-    model = model.to(device)
 
-    train = setup_model(model, args.batch_size, args, True)
-    eval = setup_model(model, args.eval_batch_size, args, is_training=False)
 
-    total_loss = []
-    eval_number = 0
-    eval_loss = []
-    best_model = float("infinity")
 
-    for i_iter in range(args.n_iter):
-        iter_loss, _ = train(train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor, device)
-        total_loss.append(iter_loss)
-        print(iter_loss)
 
-        # plot loss
-        vis.line(
-            Y=np.array(total_loss),
-            X=np.array(range(i_iter + 1)),
-            opts=dict(
-                    legend=["loss"],
-                    title=model.name + " training loos",
-                    showlegend=True),
-            win="win:train-{}".format(EXP_NAME))
+    if args.model == "GAT" or args.model == "SingleGAT" or args.model == "RNNGAT":
+        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, args.max_neighbors, dropout_prob=args.drop_prob)
+    elif args.model == "StructuralRNN" or args.model == "NodeNeighborsInterpolation":
+        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, edge_types.size(-1), dropout_prob=args.drop_prob)
+    else:
+        model = eval(args.model)(args.input_dim, args.hidden_size, args.output_size, dropout_prob=args.drop_prob)
 
-        if i_iter % args.eval_step == 0:
-            iter_eval, saved_weights = eval(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor, device)
-            eval_loss.append(iter_eval)
+    test_rmse = []
+
+    for i in range(2):
+        model.reset_parameters()
+
+        model = model.to(device)
+
+        train = setup_model(model, args.batch_size, args, True)
+        eval = setup_model(model, args.eval_batch_size, args, is_training=False)
+
+        total_loss = []
+        eval_number = 0
+        eval_loss = []
+        best_model = float("infinity")
+
+        for i_iter in range(args.n_iter):
+            iter_loss, _ = train(train_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor, device)
+            total_loss.append(iter_loss)
+            print(iter_loss)
+
+            # plot loss
             vis.line(
-                Y=np.array(eval_loss),
-                X=np.array(range(0, i_iter + 1, args.eval_step)),
-                opts=dict(legend=["RMSE"],
-                          title=model.name + " eval loos",
-                          showlegend=True),
-                win="win:eval-{}".format(EXP_NAME))
+                Y=np.array(total_loss),
+                X=np.array(range(i_iter + 1)),
+                opts=dict(
+                        legend=["loss"],
+                        title=model.name + " training loos",
+                        showlegend=True),
+                win="win:train-{}".format(EXP_NAME))
 
-            # print("dump example")
-            # torch.save(saved_weights, ensure_dir(path.join(path.join("..", "data", args.data_dir), model.name, "saved_eval_iter_{}_drop_{}.pt".format(int(i_iter/args.eval_step), args.drop_prob))))
-            # print("dump done")
+            if i_iter % args.eval_step == 0:
+                iter_eval, saved_weights = eval(eval_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor, device)
+                eval_loss.append(iter_eval)
+                vis.line(
+                    Y=np.array(eval_loss),
+                    X=np.array(range(0, i_iter + 1, args.eval_step)),
+                    opts=dict(legend=["RMSE"],
+                              title=model.name + " eval loos",
+                              showlegend=True),
+                    win="win:eval-{}".format(EXP_NAME))
 
-            if best_model > iter_eval:
-                print("save best model")
-                best_model = iter_eval
-                torch.save(model, path.join(path.join("..", "data", args.data_dir), "{}.pt".format(model.name)))
+                # print("dump example")
+                # torch.save(saved_weights, ensure_dir(path.join(path.join("..", "data", args.data_dir), model.name, "saved_eval_iter_{}_drop_{}.pt".format(int(i_iter/args.eval_step), args.drop_prob))))
+                # print("dump done")
+
+                if best_model > iter_eval:
+                    print("save best model")
+                    best_model = iter_eval
+                    torch.save(model, path.join(path.join("..", "data", args.data_dir), "{}.pt".format(model.name)))
 
 
-    # test performance
-    model = torch.load(path.join(path.join("..", "data", args.data_dir), "{}.pt".format(model.name)))
+        # test performance
+        model = torch.load(path.join(path.join("..", "data", args.data_dir), "{}.pt".format(model.name)))
 
-    test = setup_model(model, args.eval_batch_size, args, is_training=False)
-    iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor, device)
-    print("test RMSE: {}".format(iter_test))
-    torch.save(saved_weights, ensure_dir(
-        path.join(path.join("..", "data", args.data_dir), model.name, "saved_test_drop_{}.pt".format(args.drop_prob))))
+        test = setup_model(model, args.eval_batch_size, args, is_training=False)
+        iter_test, saved_weights = test(test_dataloader, input_embeddings, target_embeddings, neighbor_embeddings, edge_types, mask_neighbor, device)
+        print("test RMSE: {}".format(iter_test))
+        torch.save(saved_weights, ensure_dir(
+            path.join(path.join("..", "data", args.data_dir), model.name, "saved_test_drop_{}.pt".format(args.drop_prob))))
+        test_rmse.append(iter_test)
+    print("execution_mean: {}".format(np.mean(test_rmse)))

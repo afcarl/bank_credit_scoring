@@ -13,8 +13,7 @@ import pickle
 
 
 
-vis = visdom.Visdom(port=8097,
-                    use_incoming_socket=False)
+vis = visdom.Visdom(port=8097)
 
 
 def __pars_args__():
@@ -32,7 +31,7 @@ def __pars_args__():
     parser.add_argument('--input_dim', type=int, default=1, help='Embedding size.')
     parser.add_argument('--hidden_dim', type=int, default=5, help='Hidden state memory size.')
     parser.add_argument('--output_dim', type=int, default=1, help='output size.')
-    parser.add_argument('--time_windows', type=int, default=10, help='Attention time windows.')
+    parser.add_argument('--time_windows', type=int, default=15, help='Attention time windows.')
     parser.add_argument('--max_neighbors', "-m_neig", type=int, default=4, help='Max number of neighbors.')
     parser.add_argument('--drop_prob', type=float, default=0., help="Keep probability for dropout.")
     parser.add_argument('--temp', type=float, default=0.45, help="Softmax temperature")
@@ -45,14 +44,17 @@ def __pars_args__():
 
 
     parser.add_argument('--eval_step', type=int, default=10, help='How often do an eval step')
-    parser.add_argument('--save_rate', type=float, default=0.1, help='How often do save an eval example')
+    parser.add_argument('--save_rate', type=float, default=0.05, help='How often do save an eval example')
     parser.add_argument('--device', type=int, default=0, help='GPU device')
     return parser.parse_args()
 
 
 DATASETS = [
     # DatasetInfo(name="tr", neigh=100, relevant_neigh=3),
-    DatasetInfo(name="simple_dynamic", neigh=4, relevant_neigh=3),
+    DatasetInfo(name="noise_tr", neigh=4, relevant_neigh=3),
+    # DatasetInfo(name="utility", neigh=4, relevant_neigh=4),
+    # DatasetInfo(name="tr", neigh=4, relevant_neigh=3),
+    # DatasetInfo(name="simple_dynamic", neigh=4, relevant_neigh=3),
     # DatasetInfo(name="simple", neigh=100, relevant_neigh=4),
     # DatasetInfo(name="simple", neigh=1000, relevant_neigh=4),
     # DatasetInfo(name="simple", neigh=3000, relevant_neigh=4)
@@ -64,7 +66,8 @@ if __name__ == "__main__":
     for dataset in DATASETS:
         print("\n\n---------------")
         print("{}".format(dataset))
-        prefix = "{}_neigh-{}_rel-{}".format(dataset.name, dataset.neigh, dataset.relevant_neigh)
+        # prefix = "{}_neigh-{}_rel-{}".format(dataset.name, dataset.neigh, dataset.relevant_neigh)
+        prefix = "{}".format(dataset.name)
         args.dataset_prefix = prefix
 
         args.max_neighbors = dataset.neigh
@@ -80,13 +83,13 @@ if __name__ == "__main__":
         test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size, shuffle=False, num_workers=1, drop_last=True)
 
         test_rmse = []
-        for exp in range(1):
+        for exp in range(2):
             print("---------------")
             print("execution nr {}".format(exp+1))
             print("---------------")
             EXP_NAME = "exp-{}_time-{}".format(exp, datetime.now())
 
-            model = JordanRNNJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows,
+            model = TranslatorJointAttention(args.input_dim, args.hidden_dim, args.output_dim, args.n_head, args.time_windows,
                                       dropout_prob=args.drop_prob,
                                       temperature=args.temp)
             model.name += "_" + prefix

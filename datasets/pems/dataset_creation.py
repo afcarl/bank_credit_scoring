@@ -251,7 +251,7 @@ if __name__ == "__main__":
     #
     # input_embeddings, target_embeddings, neighbor_embeddings, edge_type, neigh_mask, station_id_to_idx, station_id_to_exp_idx = generate_embedding(stations, G)
     #
-    # torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "input_embeddings.pt")))
+    # torch.save(input_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "utility_input_embeddings.pt")))
     # torch.save(target_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "target_embeddings.pt")))
     # torch.save(neighbor_embeddings, ensure_dir(path.join(BASE_DIR, "pems", "neighbor_embeddings.pt")))
     # torch.save(edge_type, ensure_dir(path.join(BASE_DIR, "pems", "edge_type.pt")))

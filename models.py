@@ -175,11 +175,8 @@ class TranslatorJointAttention(BaseNet):
 
 
     def forward(self, node_input, neighbors_input, node_hidden, neighbors_hidden, edge_weights, mask_neight, mask_time, target):
-        use_cuda = next(self.parameters()).is_cuda
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
-        if use_cuda:
-            mask_time = mask_time.cuda()
-            mask_neight = mask_neight.cuda()
+
 
         node_output = self.node_enc(node_input)
 
