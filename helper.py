@@ -118,11 +118,11 @@ def sample_gumbel(shape, eps=1e-20):
 def get_embeddings(data_dir, prefix=""):
 
 
-    input_embeddings = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "input_embeddings.pt")))
-    target_embeddings = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "target_embeddings.pt")))
-    neighbor_embeddings = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "neighbor_embeddings.pt")))
-    mask_neighbor = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "mask_neighbor.pt")))
-    edge_type = torch.load(os.path.join(data_dir, "{}_{}".format(prefix, "edge_type.pt")))
+    input_embeddings = torch.load(os.path.join(data_dir, "{}{}".format(prefix, "input_embeddings.pt")))
+    target_embeddings = torch.load(os.path.join(data_dir, "{}{}".format(prefix, "target_embeddings.pt")))
+    neighbor_embeddings = torch.load(os.path.join(data_dir, "{}{}".format(prefix, "neighbor_embeddings.pt")))
+    mask_neighbor = torch.load(os.path.join(data_dir, "{}{}".format(prefix, "mask_neighbor.pt")))
+    edge_type = torch.load(os.path.join(data_dir, "{}{}".format(prefix, "edge_type.pt")))
 
 
     if target_embeddings.dim() == 2:

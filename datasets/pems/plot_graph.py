@@ -74,55 +74,105 @@ def draw_graph(G, stations):
     py.plot(fig)
 
 if __name__ == "__main__":
+    stations_id_2_exp_id = torch.load(path.join(BASE_DIR, "pems", "station_id_to_exp_idx.pt"))
+    exp_id = 34546
+    station_id = stations_id_2_exp_id.inverse[exp_id]
+    print(station_id)
+
     G = torch.load(path.join(BASE_DIR, "pems", "temp", "graph.pt"))
     print(nx.average_degree_connectivity(G, source="in", target="out"))
-    stations = pd.read_csv(path.join(BASE_DIR, "pems", "station_comp.csv"), index_col="ID")
-    draw_graph(G, stations)
 
-    #
-    #
+
+    neighbors_ids = G.neighbors(station_id[0])
+
+    stations = pd.read_csv(path.join(BASE_DIR, "pems", "station_comp.csv"), index_col="ID")
+    stations_distance = torch.load(path.join(BASE_DIR, "pems", "temp", "stations_distances.pt"))
+    # draw_graph(G, stations)
+
+    closest_stations = sorted(stations_distance[station_id[0]].items(), key=lambda x: x[1])
+    closest_stations = list(filter(lambda x: x[1] > 0, closest_stations))
+    print(closest_stations[:20])
+
     # nx.draw(G)
-    #
     # stations = pd.read_csv(path.join(BASE_DIR, "pems", "station_comp.csv"), index_col="ID")
+
+    ids = [400996, 402930, 402931, 401891, 401890, 400440, 400668]
+    # for id in ids:
+    #     print("{}_{}".format(id, stations.loc[id, ["Latitude", "Longitude"]].values))
+
+    lats = ['37.350929', '37.350929', '37.350929', '37.343293', '37.343447', '37.353727', '37.35512']
+    lngs = ['-121.862878', '-121.862379', '-121.862379', '-121.855795', '-121.855539', '-121.865827', '-121.866967']
+
+    weight = {
+        (400996): 0.04,
+        (402930): 1.81,
+        (402931): 1.44,
+        (401891): 0.03,
+        (401890): 0.05,
+        (400440): 0.03,
+        (400668): 0.04
+    }
     # lats = []
     # lngs = []
     # ids = []
-    #
-    # for id in stations.index:
+
+    # for id in map(lambda x: x[0], closest_stations[:20]):
     #     lat, lng = stations.loc[id, ["Latitude", "Longitude"]].values
-    #     lats.append(str(lat)[:8])
-    #     lngs.append(str(lng)[:8])
+    #     lats.append(str(lat))
+    #     lngs.append(str(lng))
     #     ids.append(str(id))
-    #
-    # data = [
-    #     go.Scattermapbox(
-    #         lat=lats,
-    #         lon=lngs,
-    #         mode='markers',
-    #         marker=dict(
-    #             size=3
-    #         ),
-    #         text=ids,
-    #     )
-    # ]
-    #
-    # layout = go.Layout(
-    #     autosize=True,
-    #     hovermode='closest',
-    #     mapbox=dict(
-    #         accesstoken=mapbox_access_token,
-    #         bearing=0,
-    #         pitch=0,
-    #         center=dict(
-    #             lat=37.62,
-    #             lon=-122.12
-    #         ),
-    #         zoom=5
-    #     ),
-    # )
-    #
-    # fig = dict(data=data, layout=layout)
-    # py.plot(fig, filename='Stations')
+
+
+    # for id in stations.index:
+    # for id in ids:
+    #     lat, lng = stations.loc[id, ["Latitude", "Longitude"]].values
+    #     lats.append(str(lat))
+    #     lngs.append(str(lng))
+        # ids.append(str(id))
+
+    data = [
+        go.Scattermapbox(
+            lat=['37.348392'],
+            lon=['-121.860589'],
+            mode='markers',
+            marker=dict(
+                size=15,
+                color='rgba(255, 51, 51, 1)'
+            ),
+            text=station_id,
+            name="node"
+        ),
+
+        go.Scattermapbox(
+            lat=lats,
+            lon=lngs,
+            mode='markers',
+            marker=dict(
+                size=10,
+                color='rgba(51, 51, 255, 1)'
+            ),
+            text=ids,
+            name="neighbours"
+        )
+    ]
+
+    layout = go.Layout(
+        autosize=True,
+        hovermode='closest',
+        mapbox=dict(
+            accesstoken=mapbox_access_token,
+            bearing=0,
+            pitch=0,
+            center=dict(
+                lat=37.348392,
+                lon=-121.860589
+            ),
+            zoom=15
+        ),
+    )
+
+    fig = dict(data=data, layout=layout)
+    py.plot(fig, filename='Stations')
 
 
 

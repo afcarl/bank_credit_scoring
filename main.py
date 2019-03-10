@@ -18,7 +18,7 @@ vis = visdom.Visdom(port=8097)
 
 def __pars_args__():
     parser = argparse.ArgumentParser(description='Guided attention model')
-    parser.add_argument("--data_dir", "-d_dir", type=str, default="sintetic", help="Directory containing dataset file")
+    parser.add_argument("--data_dir", "-d_dir", type=str, default="utility", help="Directory containing dataset file")
     parser.add_argument("--dataset_prefix", type=str, default="simple_random_neigh-100_rel-4_", help="Prefix for the dataset")
     parser.add_argument("--train_file_name", "-train_fn", type=str, default="train_dataset", help="Train file name")
     parser.add_argument("--eval_file_name", "-eval_fn", type=str, default="eval_dataset", help="Eval file name")
@@ -51,10 +51,10 @@ def __pars_args__():
 
 DATASETS = [
     # DatasetInfo(name="tr", neigh=100, relevant_neigh=3),
-    DatasetInfo(name="noise_tr", neigh=4, relevant_neigh=3),
-    # DatasetInfo(name="utility", neigh=4, relevant_neigh=4),
-    # DatasetInfo(name="tr", neigh=4, relevant_neigh=3),
-    # DatasetInfo(name="simple_dynamic", neigh=4, relevant_neigh=3),
+    # DatasetInfo(name="noise_tr", neigh=4, relevant_neigh=3),
+    DatasetInfo(name="utility", neigh=4, relevant_neigh=4),
+    DatasetInfo(name="tr", neigh=4, relevant_neigh=3),
+    DatasetInfo(name="simple_dynamic", neigh=4, relevant_neigh=3),
     # DatasetInfo(name="simple", neigh=100, relevant_neigh=4),
     # DatasetInfo(name="simple", neigh=1000, relevant_neigh=4),
     # DatasetInfo(name="simple", neigh=3000, relevant_neigh=4)
@@ -62,7 +62,7 @@ DATASETS = [
 
 if __name__ == "__main__":
     args = __pars_args__()
-    device = torch.device("cuda:{}".format(args.device) if args.use_cuda else "cpu")
+    # device = torch.device("cuda:{}".format(args.device) if args.use_cuda else "cpu")
     for dataset in DATASETS:
         print("\n\n---------------")
         print("{}".format(dataset))

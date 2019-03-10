@@ -159,9 +159,11 @@ class SimpleGRU(BaseNet):
         self.rnn = nn.GRU(input_dim, hidden_dim,
                           num_layers=1,
                           batch_first=True)
-        self.app_rnn = nn.Sequential(nn.Dropout(dropout_prob))
+        self.app_rnn = nn.Sequential(nn.Dropout(dropout_prob),
+                                     nn.ReLU())
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
         #                          nn.Tanh(),
@@ -205,10 +207,10 @@ class StructuralRNN(BaseNet):
 
         self.app_outRNN = nn.Sequential(nn.Dropout(dropout_prob))
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
 
-        # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-        #                          nn.ELU())
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         # self.prj = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2),
         #                          nn.Tanh(),
@@ -322,11 +324,11 @@ class NodeInterpolation(BaseNet):
         super(NodeInterpolation, self).__init__()
         self.node_prj = nn.Sequential(nn.Linear(input_dim, hidden_dim),
                                       nn.Dropout(dropout_prob),
-                                      nn.ReLU())
+                                      nn.ELU())
 
-        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
-        # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
-        #                          nn.ELU())
+        # self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim))
+        self.prj = nn.Sequential(nn.Linear(hidden_dim, output_dim),
+                                 nn.ELU())
 
         self.name = "NodeInterpolation"
 
@@ -335,7 +337,7 @@ class NodeInterpolation(BaseNet):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.nlayers = 0
-        self.criterion = nn.MSELoss()
+        self.criterion = torch.nn.MSELoss(reduction='mean')
 
     def forward(self, node_input, node_hidden, neighbors_input, neighbors_hidden, edge_types, mask_neight, mask_time):
         batch_size, neigh_number, time_steps, input_dim = neighbors_input.size()
